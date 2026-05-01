@@ -1,0 +1,10 @@
+# @package _global_
+# TSM (Temporal Shift Module) on ResNet50 — strong backbone with free temporal modeling.
+# fold_div=8: 1/8 channels see past frame, 1/8 see future frame, rest unchanged.
+model:
+  name: tsm_resnet
+  pretrained: true
+  num_classes: ${num_classes}
+  backbone: resnet50
+  num_frames: ${dataset.num_frames}
+  fold_div: 8

@@ -1,0 +1,7 @@
+# @package _global_
+# Track 2 (Open World): TSM-ResNet50 with ImageNet pretrained weights.
+defaults:
+  - override /model: tsm_resnet
+
+model:
+  pretrained: true

@@ -27,6 +27,7 @@ from torch.utils.data import DataLoader
 from dataset.video_dataset import VideoFrameDataset, collect_video_samples
 from models.cnn_baseline import CNNBaseline
 from models.cnn_lstm import CNNLSTM
+from models.tsm_resnet import TSMResNet
 from utils import build_transforms, set_seed, split_train_val
 
 
@@ -44,6 +45,14 @@ def build_model(cfg: DictConfig) -> nn.Module:
             num_classes=num_classes,
             pretrained=pretrained,
             lstm_hidden_size=int(hidden),
+        )
+    if name == "tsm_resnet":
+        return TSMResNet(
+            num_classes=num_classes,
+            num_frames=int(cfg.model.num_frames),
+            pretrained=pretrained,
+            backbone=str(cfg.model.get("backbone", "resnet50")),
+            fold_div=int(cfg.model.get("fold_div", 8)),
         )
 
     raise ValueError(f"Unknown model.name: {name}")
