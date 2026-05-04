@@ -26,7 +26,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from dataset.video_dataset import VideoFrameDataset
+from dataset.video_dataset import VideoFrameDataset, _list_frame_paths
 from train import build_model
 from utils import build_transforms, set_seed
 
@@ -199,7 +199,23 @@ def main(cfg: DictConfig) -> None:
             f"Discovered {len(video_dirs)} video folders (sorted by video name).",
             flush=True,
         )
-    sample_list: List[Tuple[Path, int]] = [(p, 0) for p in video_dirs]
+    valid_names: List[str] = []
+    valid_dirs: List[Path] = []
+    empty_names: List[str] = []
+    for name, p in zip(video_names, video_dirs):
+        if _list_frame_paths(p):
+            valid_names.append(name)
+            valid_dirs.append(p)
+        else:
+            empty_names.append(name)
+    if empty_names:
+        print(
+            f"Warning: {len(empty_names)} video folder(s) have no frames; "
+            "will assign class 0 in output.",
+            flush=True,
+        )
+
+    sample_list: List[Tuple[Path, int]] = [(p, 0) for p in valid_dirs]
 
     dataset = VideoFrameDataset(
         root_dir=test_root,
@@ -224,18 +240,20 @@ def main(cfg: DictConfig) -> None:
     predictions = run_inference(model, loader, device, total_videos=len(dataset))
     print("Inference finished.", flush=True)
 
-    if len(predictions) != len(video_names):
+    if len(predictions) != len(valid_names):
         raise RuntimeError(
-            f"Prediction count {len(predictions)} != manifest length {len(video_names)}"
+            f"Prediction count {len(predictions)} != valid video count {len(valid_names)}"
         )
+
+    pred_map = dict(zip(valid_names, predictions))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Writing submission CSV: {output_path}", flush=True)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["video_name", "predicted_class"])
-        for name, pred in zip(video_names, predictions):
-            w.writerow([name, pred])
+        for name in video_names:
+            w.writerow([name, pred_map.get(name, 0)])
 
     print(f"Done. Wrote {len(predictions)} rows to {output_path}", flush=True)
 

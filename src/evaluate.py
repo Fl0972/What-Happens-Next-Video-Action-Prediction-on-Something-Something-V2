@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 
 from dataset.video_dataset import VideoFrameDataset, collect_video_samples
 from train import build_model
-from utils import build_transforms, set_seed
+from utils import build_transforms, set_seed, split_train_val
 
 
 def load_model_from_checkpoint(checkpoint: Dict[str, Any], device: torch.device) -> torch.nn.Module:
@@ -64,7 +64,12 @@ def main(cfg: DictConfig) -> None:
     eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained_used)
 
     val_dir = Path(cfg.dataset.val_dir).resolve()
-    val_samples = collect_video_samples(val_dir)
+    all_samples = collect_video_samples(val_dir)
+    _, val_samples = split_train_val(
+        all_samples,
+        val_ratio=float(cfg.dataset.val_ratio),
+        seed=int(cfg.dataset.seed),
+    )
 
     max_samples = cfg.dataset.get("max_samples")
     if max_samples is not None:

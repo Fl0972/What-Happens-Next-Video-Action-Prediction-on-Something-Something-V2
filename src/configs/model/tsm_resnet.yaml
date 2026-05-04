@@ -5,6 +5,6 @@ model:
   name: tsm_resnet
   pretrained: true
   num_classes: ${num_classes}
-  backbone: resnet50
+  backbone: resnet18
   num_frames: ${dataset.num_frames}
   fold_div: 8
