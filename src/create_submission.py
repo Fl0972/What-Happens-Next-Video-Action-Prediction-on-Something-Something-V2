@@ -124,17 +124,29 @@ def run_inference(
     loader: DataLoader,
     device: torch.device,
     total_videos: int,
+    tta: bool = False,
 ) -> List[int]:
-    """Run the model on the loader; print batch progress to stdout."""
+    """Run the model on the loader; print batch progress to stdout.
+
+    When tta=True each item from the loader is (B, 10, T, C, H, W) —
+    10 crops produced by VideoTransform.tta(). Logits are averaged across crops.
+    """
     model.eval()
     preds: List[int] = []
     n_batches = len(loader)
-    # About 10 progress lines for long runs; at least every batch if tiny
     log_interval = max(1, n_batches // 10)
     processed = 0
     for batch_idx, (video_batch, _labels) in enumerate(loader, start=1):
         video_batch = video_batch.to(device)
-        logits = model(video_batch)
+
+        if tta:
+            # video_batch: (B, N_crops, T, C, H, W)
+            B, N, T, C, H, W = video_batch.shape
+            logits = model(video_batch.view(B * N, T, C, H, W))   # (B*N, num_classes)
+            logits = logits.view(B, N, -1).mean(dim=1)             # (B, num_classes)
+        else:
+            logits = model(video_batch)
+
         batch_pred = logits.argmax(dim=1).cpu().tolist()
         preds.extend(int(p) for p in batch_pred)
         bs = video_batch.size(0)
@@ -217,11 +229,16 @@ def main(cfg: DictConfig) -> None:
 
     sample_list: List[Tuple[Path, int]] = [(p, 0) for p in valid_dirs]
 
+    use_tta = bool(cfg.dataset.get("tta", False))
+    if use_tta:
+        print("TTA enabled: averaging over 10 crops (5 positions × 2 flips).", flush=True)
+
     dataset = VideoFrameDataset(
         root_dir=test_root,
         num_frames=num_frames,
         transform=eval_transform,
         sample_list=sample_list,
+        tta=use_tta,
     )
     batch_size = int(cfg.training.batch_size)
     loader = DataLoader(
@@ -237,7 +254,7 @@ def main(cfg: DictConfig) -> None:
         f"{len(loader)} batches",
         flush=True,
     )
-    predictions = run_inference(model, loader, device, total_videos=len(dataset))
+    predictions = run_inference(model, loader, device, total_videos=len(dataset), tta=use_tta)
     print("Inference finished.", flush=True)
 
     if len(predictions) != len(valid_names):

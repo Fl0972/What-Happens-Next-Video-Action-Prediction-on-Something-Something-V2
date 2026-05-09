@@ -2,8 +2,10 @@
 training:
   batch_size: 8
   lr: 0.0001
-  epochs: 20
+  epochs: 25
   num_workers: 2
   # Where to save the best checkpoint (by validation accuracy)
-  checkpoint_path: ${hydra:runtime.cwd}/models/tsm_pretrained_18.pt
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_pretrained_18_tta3.pt
   device: cuda
+  mixup_alpha: 0.4   # Beta distribution parameter; 0.0 disables MixUp
+  cutmix_prob: 0.5   # Probability of using CutMix instead of MixUp per batch

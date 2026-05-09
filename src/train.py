@@ -28,7 +28,14 @@ from dataset.video_dataset import VideoFrameDataset, collect_video_samples
 from models.cnn_baseline import CNNBaseline
 from models.cnn_lstm import CNNLSTM
 from models.tsm_resnet import TSMResNet
-from utils import build_transforms, set_seed, split_train_val
+from utils import (
+    build_transforms,
+    cutmix_data,
+    mixed_loss,
+    mixup_data,
+    set_seed,
+    split_train_val,
+)
 
 
 def build_model(cfg: DictConfig) -> nn.Module:
@@ -41,11 +48,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
         return CNNBaseline(num_classes=num_classes, pretrained=pretrained)
     if name == "cnn_lstm":
         hidden = cfg.model.get("lstm_hidden_size", 512)
-        return CNNLSTM(
-            num_classes=num_classes,
-            pretrained=pretrained,
-            lstm_hidden_size=int(hidden),
-        )
+        return CNNLSTM(num_classes=num_classes, pretrained=pretrained, lstm_hidden_size=int(hidden))
     if name == "tsm_resnet":
         return TSMResNet(
             num_classes=num_classes,
@@ -54,7 +57,6 @@ def build_model(cfg: DictConfig) -> nn.Module:
             backbone=str(cfg.model.get("backbone", "resnet50")),
             fold_div=int(cfg.model.get("fold_div", 8)),
         )
-
     raise ValueError(f"Unknown model.name: {name}")
 
 
@@ -64,32 +66,47 @@ def train_one_epoch(
     loss_fn: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    mixup_alpha: float = 0.0,
+    cutmix_prob: float = 0.0,
 ) -> Tuple[float, float]:
-    """Returns (average loss, top-1 accuracy) on the training set for one epoch."""
+    """Returns (average loss, top-1 accuracy) for one epoch."""
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
 
     for video_batch, labels in data_loader:
-        # video_batch: (B, T, C, H, W), labels: (B,)
         video_batch = video_batch.to(device)
         labels = labels.to(device)
 
         optimizer.zero_grad()
-        logits = model(video_batch)  # (B, num_classes)
-        loss = loss_fn(logits, labels)
+
+        # MixUp / CutMix — chosen randomly per batch
+        use_cutmix = cutmix_prob > 0 and torch.rand(1).item() < cutmix_prob
+        use_mixup  = mixup_alpha > 0 and not use_cutmix
+
+        if use_cutmix:
+            video_batch, y_a, y_b, lam = cutmix_data(video_batch, labels)
+        elif use_mixup:
+            video_batch, y_a, y_b, lam = mixup_data(video_batch, labels, mixup_alpha)
+
+        logits = model(video_batch)
+
+        if use_cutmix or use_mixup:
+            loss = mixed_loss(loss_fn, logits, y_a, y_b, lam)
+            # Accuracy tracked against the dominant label
+            correct += int((logits.argmax(1) == y_a).sum().item())
+        else:
+            loss = loss_fn(logits, labels)
+            correct += int((logits.argmax(1) == labels).sum().item())
+
         loss.backward()
         optimizer.step()
 
         running_loss += float(loss.item()) * labels.size(0)
-        predictions = logits.argmax(dim=1)
-        correct += int((predictions == labels).sum().item())
         total += labels.size(0)
 
-    average_loss = running_loss / max(total, 1)
-    accuracy = correct / max(total, 1)
-    return average_loss, accuracy
+    return running_loss / max(total, 1), correct / max(total, 1)
 
 
 @torch.no_grad()
@@ -108,18 +125,14 @@ def evaluate_epoch(
     for video_batch, labels in data_loader:
         video_batch = video_batch.to(device)
         labels = labels.to(device)
-
         logits = model(video_batch)
         loss = loss_fn(logits, labels)
 
         running_loss += float(loss.item()) * labels.size(0)
-        predictions = logits.argmax(dim=1)
-        correct += int((predictions == labels).sum().item())
+        correct += int((logits.argmax(1) == labels).sum().item())
         total += labels.size(0)
 
-    average_loss = running_loss / max(total, 1)
-    accuracy = correct / max(total, 1)
-    return average_loss, accuracy
+    return running_loss / max(total, 1), correct / max(total, 1)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -142,31 +155,28 @@ def main(cfg: DictConfig) -> None:
         all_samples = all_samples[: int(max_samples)]
 
     train_samples, val_samples = split_train_val(
-        all_samples,
-        val_ratio=float(cfg.dataset.val_ratio),
-        seed=int(cfg.dataset.seed),
+        all_samples, val_ratio=float(cfg.dataset.val_ratio), seed=int(cfg.dataset.seed)
     )
 
-    # Match normalization to pretrained flag (ImageNet stats when using pretrained weights).
     use_imagenet_norm = bool(cfg.model.pretrained)
-    train_transform = build_transforms(
-        is_training=True, use_imagenet_norm=use_imagenet_norm
-    )
-    eval_transform = build_transforms(
-        is_training=False, use_imagenet_norm=use_imagenet_norm
-    )
+    train_transform = build_transforms(is_training=True,  use_imagenet_norm=use_imagenet_norm)
+    eval_transform  = build_transforms(is_training=False, use_imagenet_norm=use_imagenet_norm)
+
+    num_frames = int(cfg.dataset.num_frames)
 
     train_dataset = VideoFrameDataset(
         root_dir=train_dir,
-        num_frames=int(cfg.dataset.num_frames),
+        num_frames=num_frames,
         transform=train_transform,
         sample_list=train_samples,
+        temporal_jitter=True,   # TSN-style segment sampling during training
     )
     val_dataset = VideoFrameDataset(
         root_dir=train_dir,
-        num_frames=int(cfg.dataset.num_frames),
+        num_frames=num_frames,
         transform=eval_transform,
         sample_list=val_samples,
+        temporal_jitter=False,  # deterministic for validation
     )
 
     train_loader = DataLoader(
@@ -185,15 +195,19 @@ def main(cfg: DictConfig) -> None:
     )
 
     model = build_model(cfg).to(device)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn  = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.training.lr))
+
+    mixup_alpha = float(cfg.training.get("mixup_alpha", 0.0))
+    cutmix_prob = float(cfg.training.get("cutmix_prob", 0.0))
 
     best_val_accuracy = 0.0
     checkpoint_path = Path(cfg.training.checkpoint_path).resolve()
 
     for epoch in range(int(cfg.training.epochs)):
         train_loss, train_acc = train_one_epoch(
-            model, train_loader, loss_fn, optimizer, device
+            model, train_loader, loss_fn, optimizer, device,
+            mixup_alpha=mixup_alpha, cutmix_prob=cutmix_prob,
         )
         val_loss, val_acc = evaluate_epoch(model, val_loader, loss_fn, device)
 
@@ -210,19 +224,16 @@ def main(cfg: DictConfig) -> None:
                 "model_name": cfg.model.name,
                 "num_classes": int(cfg.model.num_classes),
                 "pretrained": bool(cfg.model.pretrained),
-                "num_frames": int(cfg.dataset.num_frames),
+                "num_frames": num_frames,
                 "val_accuracy": val_acc,
                 "config": OmegaConf.to_container(cfg, resolve=True),
             }
             if cfg.model.name == "cnn_lstm":
-                payload["lstm_hidden_size"] = int(
-                    cfg.model.get("lstm_hidden_size", 512)
-                )
+                payload["lstm_hidden_size"] = int(cfg.model.get("lstm_hidden_size", 512))
 
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(payload, checkpoint_path)
-            print(
-                f"  Saved new best model to {checkpoint_path} (val acc={val_acc:.4f})"
-            )
+            print(f"  Saved new best model to {checkpoint_path} (val acc={val_acc:.4f})")
 
     print(f"Done. Best validation accuracy: {best_val_accuracy:.4f}")
 
