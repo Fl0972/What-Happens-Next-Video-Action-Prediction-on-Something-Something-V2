@@ -10,13 +10,20 @@ Reference: Lin et al., "TSM: Temporal Shift Module for Efficient Video Understan
 Forward:
     Input:  (B, T, C, H, W)
     Reshape: (B*T, C, H, W)   <- TemporalShift layers reshape internally to (B,T,C,H,W)
-    Backbone: ResNet50 with TSM injected in every residual block
-    Pool: global average pool -> (B*T, 2048)
-    Flatten + reshape: (B, T, 2048) -> mean over T -> (B, 2048)
-    Linear: (B, num_classes)
+    Backbone: ResNet with TSM (and optional stochastic depth) injected in every block
+    Pool: global average pool -> (B*T, feature_dim)
+    Flatten + reshape: (B, T, feature_dim) -> mean over T -> (B, feature_dim)
+    Optional dropout, then linear: (B, num_classes)
+
+Closed-track (from-scratch) extras:
+    * Stochastic depth on the residual branch (linearly scaled per block, a la Huang
+      et al., "Deep Networks with Stochastic Depth", ECCV 2016).
+    * Dropout right before the classifier head.
 """
 
 from __future__ import annotations
+
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -64,12 +71,69 @@ class TemporalShift(nn.Module):
         return out.view(BT, C, H, W)
 
 
-def _inject_tsm(backbone: nn.Module, num_frames: int, fold_div: int) -> nn.Module:
-    """Wrap every residual block in the four ResNet stages with TemporalShift."""
-    for stage_name in ("layer1", "layer2", "layer3", "layer4"):
+def _drop_path(x: torch.Tensor, drop_prob: float, training: bool) -> torch.Tensor:
+    """Per-sample DropPath: zero a fraction of samples and rescale survivors."""
+    if drop_prob <= 0.0 or not training:
+        return x
+    keep_prob = 1.0 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    mask = x.new_empty(shape).bernoulli_(keep_prob)
+    return x * mask / keep_prob
+
+
+class _ResBlockWithDropPath(nn.Module):
+    """
+    Wraps a torchvision BasicBlock or Bottleneck and applies stochastic depth
+    on the residual branch only — the identity shortcut is always preserved.
+    """
+
+    def __init__(self, block: nn.Module, drop_prob: float) -> None:
+        super().__init__()
+        self.block = block
+        self.drop_prob = float(drop_prob)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b = self.block
+        identity = x
+        if hasattr(b, "conv3"):  # Bottleneck (ResNet50+)
+            out = b.relu(b.bn1(b.conv1(x)))
+            out = b.relu(b.bn2(b.conv2(out)))
+            out = b.bn3(b.conv3(out))
+        else:  # BasicBlock (ResNet18/34)
+            out = b.relu(b.bn1(b.conv1(x)))
+            out = b.bn2(b.conv2(out))
+        out = _drop_path(out, self.drop_prob, self.training)
+        if b.downsample is not None:
+            identity = b.downsample(x)
+        return b.relu(out + identity)
+
+
+def _linear_drop_path_rates(num_blocks: int, max_rate: float) -> List[float]:
+    if num_blocks <= 1 or max_rate <= 0.0:
+        return [0.0] * num_blocks
+    return [max_rate * i / (num_blocks - 1) for i in range(num_blocks)]
+
+
+def _inject_tsm(
+    backbone: nn.Module,
+    num_frames: int,
+    fold_div: int,
+    drop_path_rate: float = 0.0,
+) -> nn.Module:
+    """Wrap every residual block in the four ResNet stages with TemporalShift,
+    optionally adding stochastic depth on the residual branch (rate scales
+    linearly from 0 at the first block to ``drop_path_rate`` at the last)."""
+    stage_names = ("layer1", "layer2", "layer3", "layer4")
+    total_blocks = sum(len(getattr(backbone, s)) for s in stage_names)
+    rates = _linear_drop_path_rates(total_blocks, drop_path_rate)
+    rate_iter = iter(rates)
+
+    for stage_name in stage_names:
         stage = getattr(backbone, stage_name)
         for i, block in enumerate(stage):
-            stage[i] = TemporalShift(block, num_frames=num_frames, fold_div=fold_div)
+            r = next(rate_iter)
+            inner = block if r == 0.0 else _ResBlockWithDropPath(block, r)
+            stage[i] = TemporalShift(inner, num_frames=num_frames, fold_div=fold_div)
     return backbone
 
 
@@ -81,6 +145,8 @@ class TSMResNet(nn.Module):
         pretrained: bool = False,
         backbone: str = "resnet50",
         fold_div: int = 8,
+        drop_path_rate: float = 0.0,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         if backbone == "resnet50":
@@ -95,8 +161,14 @@ class TSMResNet(nn.Module):
         feature_dim = net.fc.in_features
         net.fc = nn.Identity()
 
-        self.backbone = _inject_tsm(net, num_frames=num_frames, fold_div=fold_div)
+        self.backbone = _inject_tsm(
+            net,
+            num_frames=num_frames,
+            fold_div=fold_div,
+            drop_path_rate=float(drop_path_rate),
+        )
         self.num_frames = num_frames
+        self.dropout = nn.Dropout(p=float(dropout)) if dropout and dropout > 0 else nn.Identity()
         self.classifier = nn.Linear(feature_dim, num_classes)
 
     def forward(self, video_batch: torch.Tensor) -> torch.Tensor:
@@ -119,5 +191,6 @@ class TSMResNet(nn.Module):
 
         # (B, T, feature_dim) -> mean over T -> (B, feature_dim)
         pooled = features.view(B, T, -1).mean(dim=1)
+        pooled = self.dropout(pooled)
 
         return self.classifier(pooled)

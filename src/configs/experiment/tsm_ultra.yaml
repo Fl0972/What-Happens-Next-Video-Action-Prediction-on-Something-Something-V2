@@ -1,0 +1,76 @@
+# @package _global_
+# Track 1 (Closed World) — TSM_ultra: strongest from-scratch recipe on
+# Something-Something V2 with 5-frame clips.
+#
+# Why TSM is the right architecture for SSv2 from scratch:
+#   * SSv2 labels are defined by *motion* ("Pulling X from left to right",
+#     "Pouring X into Y") — TSM was literally designed for this dataset.
+#   * Temporal Shift Module mixes neighbouring frames with zero added
+#     parameters → strong inductive bias for "neighbouring frames are
+#     related", which matters most when no ImageNet pretraining is allowed.
+#
+# Architectural choices (vs the prior tsm_closed recipe):
+#   * 5 frames (not 16) — closer to the closed-track frame budget and
+#     keeps batch_size high enough for stable BatchNorm statistics.
+#   * fold_div = 4 (not 8) — TSM's published default of 1/8 was tuned on
+#     8-16 frame clips. With only 5 frames, more aggressive per-layer
+#     mixing (1/4 of channels each direction = 50% participate) makes
+#     each ResNet block reliably see its temporal neighbours.
+#   * ResNet18 backbone — lower capacity than ResNet50 → less overfit on
+#     a modest 33-class dataset, faster per epoch, fits a 4h budget.
+#   * DropPath linearly to 0.1, head dropout 0.3. Reduced from the prior
+#     0.2 / 0.5 because the earlier recipe was over-regularizing a
+#     parameter-light from-scratch model and slowing convergence.
+#
+# Training recipe (~4h on a single A4000-class GPU at batch 32):
+#   * AdamW, lr 1e-3 with 8-epoch linear warmup + cosine annealing,
+#     weight decay 5e-4.
+#   * Regularization warmup: MixUp / CutMix DISABLED for the first 10
+#     epochs. The cold-start backbone learns basic per-frame features
+#     before strong label-mixing kicks in — this was the single biggest
+#     fix on VideoFormerLite (9.4% → 45.8% val acc) and applies here too.
+#   * Label smoothing 0.1, MixUp alpha 0.2, CutMix p 0.25 (lower than the
+#     usual 0.5 — on SSv2 a cut patch crosses all 5 frames and frequently
+#     deletes the hand/object motion that IS the label).
+#   * RandAugment 2 ops @ magnitude 0.5, Random Erasing 0.25 — both
+#     temporally consistent (sampled once per clip, applied to every frame).
+#   * Horizontal flip DISABLED — several classes are direction-sensitive
+#     (e.g. "Pulling left/right", "Pouring into/out of"); hflip would
+#     silently corrupt labels.
+#   * WeightedRandomSampler with sampler_power=0.5 — 1/sqrt(count) soft
+#     rebalancing for the 20x class imbalance (162 → 3170 clips/class).
+#   * 80 epochs at batch_size 32 (TSM is parameter-free on top of
+#     ResNet18 so we can use a generous batch size).
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 5
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 4
+  drop_path_rate: 0.1
+  dropout: 0.3
+
+training:
+  epochs: 80
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_ultra.pt

@@ -1,0 +1,9 @@
+# @package _global_
+# R(2+1)D-18 — 3D CNN with factored (2D spatial + 1D temporal) convolutions.
+# Default ``pretrained: false`` keeps the architecture closed-track friendly;
+# closed-track experiments will keep this and tune training hyperparameters.
+model:
+  name: r2plus1d
+  pretrained: false
+  num_classes: ${num_classes}
+  dropout: 0.2

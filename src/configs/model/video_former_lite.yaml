@@ -1,0 +1,19 @@
+# @package _global_
+# VideoFormer-Lite — per-frame ResNet18 (random init) + small temporal Transformer
+# that attends across the 4 frame tokens. The d_model is fixed at 512 because it
+# must match ResNet18's penultimate feature dim.
+model:
+  name: video_former_lite
+  pretrained: false
+  num_classes: ${num_classes}
+  num_frames: ${dataset.num_frames}
+
+  d_model: 512
+  n_heads: 8
+  n_layers: 2
+  mlp_ratio: 4.0
+
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.1
+  dropout: 0.2

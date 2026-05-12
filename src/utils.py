@@ -5,14 +5,45 @@ Small helpers: reproducibility, image transforms, and metric computation.
 from __future__ import annotations
 
 import random
+from collections import Counter
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as F
-from PIL import Image, ImageFilter
-from torch.utils.data import Dataset
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from torch.utils.data import Dataset, WeightedRandomSampler
+
+
+# ---------------------------------------------------------------------------
+# Temporally-consistent RandAugment-style ops
+# ---------------------------------------------------------------------------
+# Each entry is (name, op_factory). op_factory(magnitude_in_[0,1]) returns a
+# PIL.Image -> PIL.Image callable. Sampled once per clip and applied to every
+# frame, so the temporal trajectory is preserved.
+
+def _rand_aug_ops() -> List[Tuple[str, Callable[[float], Callable]]]:
+    return [
+        ("AutoContrast", lambda _m: ImageOps.autocontrast),
+        ("Equalize",     lambda _m: ImageOps.equalize),
+        ("Posterize",    lambda m: (lambda img: ImageOps.posterize(img, max(4, 8 - int(round(m * 4)))))),
+        ("Solarize",     lambda m: (lambda img: ImageOps.solarize(img, int(round(256 - m * 256))))),
+        ("Sharpness",    lambda m: (lambda img: ImageEnhance.Sharpness(img).enhance(1.0 + m * 0.9 * random.choice((-1, 1))))),
+        ("ShearX",       lambda m: (lambda img: img.transform(img.size, Image.AFFINE, (1, m * 0.3 * random.choice((-1, 1)), 0, 0, 1, 0), resample=Image.BILINEAR))),
+        ("ShearY",       lambda m: (lambda img: img.transform(img.size, Image.AFFINE, (1, 0, 0, m * 0.3 * random.choice((-1, 1)), 1, 0), resample=Image.BILINEAR))),
+        ("TranslateX",   lambda m: (lambda img: img.transform(img.size, Image.AFFINE, (1, 0, m * img.size[0] * 0.2 * random.choice((-1, 1)), 0, 1, 0), resample=Image.BILINEAR))),
+        ("TranslateY",   lambda m: (lambda img: img.transform(img.size, Image.AFFINE, (1, 0, 0, 0, 1, m * img.size[1] * 0.2 * random.choice((-1, 1))), resample=Image.BILINEAR))),
+    ]
+
+
+def _sample_rand_augment(num_ops: int, magnitude: float) -> List[Callable]:
+    """Sample ``num_ops`` ops once (per clip). Returns ready-to-call PIL transforms."""
+    if num_ops <= 0:
+        return []
+    pool = _rand_aug_ops()
+    chosen = random.sample(pool, k=min(num_ops, len(pool)))
+    return [factory(magnitude) for _name, factory in chosen]
 
 
 def set_seed(seed: int) -> None:
@@ -38,9 +69,15 @@ class VideoTransform:
         image_size: int = 224,
         is_training: bool = True,
         use_imagenet_norm: bool = True,
+        rand_augment_ops: int = 0,
+        rand_augment_magnitude: float = 0.5,
+        horizontal_flip: bool = True,
     ) -> None:
         self.image_size = image_size
         self.is_training = is_training
+        self.rand_augment_ops = int(rand_augment_ops)
+        self.rand_augment_magnitude = float(rand_augment_magnitude)
+        self.horizontal_flip = bool(horizontal_flip)
         if use_imagenet_norm:
             self.mean = [0.485, 0.456, 0.406]
             self.std = [0.229, 0.224, 0.225]
@@ -52,8 +89,10 @@ class VideoTransform:
         if self.is_training:
             # All random params sampled once — same for every frame in the clip
             i, j, h, w = self._crop_params(frames[0])
-            do_flip   = random.random() < 0.5
-            angle     = random.uniform(-15, 15)
+            # hflip is gated by ``horizontal_flip`` because several action classes
+            # are direction-sensitive (e.g. "Pulling left/right"); flipping them
+            # silently inverts the label.
+            do_flip   = self.horizontal_flip and (random.random() < 0.5)
             brightness = random.uniform(0.6, 1.4)
             contrast   = random.uniform(0.6, 1.4)
             saturation = random.uniform(0.6, 1.4)
@@ -62,6 +101,8 @@ class VideoTransform:
             do_blur    = random.random() < 0.2
             sigma      = random.uniform(0.1, 2.0)
             do_erase   = random.random() < 0.3
+            # RandAugment-style: pick ops once per clip, apply identically to every frame
+            rand_aug = _sample_rand_augment(self.rand_augment_ops, self.rand_augment_magnitude)
 
         tensors: List[torch.Tensor] = []
         for img in frames:
@@ -69,7 +110,6 @@ class VideoTransform:
                 img = F.resized_crop(img, i, j, h, w, [self.image_size, self.image_size])
                 if do_flip:
                     img = F.hflip(img)
-                img = F.rotate(img, angle)
                 img = F.adjust_brightness(img, brightness)
                 img = F.adjust_contrast(img, contrast)
                 img = F.adjust_saturation(img, saturation)
@@ -78,6 +118,8 @@ class VideoTransform:
                     img = F.rgb_to_grayscale(img, num_output_channels=3)
                 if do_blur:
                     img = img.filter(ImageFilter.GaussianBlur(radius=sigma))
+                for op in rand_aug:
+                    img = op(img)
             else:
                 img = F.resize(img, [self.image_size + 32, self.image_size + 32])
                 img = F.center_crop(img, [self.image_size, self.image_size])
@@ -155,11 +197,17 @@ def build_transforms(
     image_size: int = 224,
     is_training: bool = True,
     use_imagenet_norm: bool = True,
+    rand_augment_ops: int = 0,
+    rand_augment_magnitude: float = 0.5,
+    horizontal_flip: bool = True,
 ) -> VideoTransform:
     return VideoTransform(
         image_size=image_size,
         is_training=is_training,
         use_imagenet_norm=use_imagenet_norm,
+        rand_augment_ops=rand_augment_ops,
+        rand_augment_magnitude=rand_augment_magnitude,
+        horizontal_flip=horizontal_flip,
     )
 
 
@@ -248,6 +296,26 @@ def accuracy_topk(
     predictions = predictions.t()
     correct = predictions.eq(targets.view(1, -1).expand_as(predictions))
     return tuple(correct[:k].reshape(-1).float().sum() / batch_size for k in topk)
+
+
+def build_weighted_sampler(
+    samples: Sequence[Tuple[Path, int]],
+    power: float = 0.5,
+) -> WeightedRandomSampler:
+    """
+    WeightedRandomSampler with per-sample weight proportional to ``1 / count^power``.
+
+    power=0.0  -> uniform sampling (no rebalancing).
+    power=0.5  -> sqrt-frequency reweighting (recommended default; soft balance).
+    power=1.0  -> full inverse-frequency reweighting (every class drawn equally often).
+
+    ``num_samples`` is set to ``len(samples)`` so one "epoch" still sees the same
+    number of clips as before (just with a class-balanced distribution).
+    """
+    counts = Counter(c for _, c in samples)
+    weights = [1.0 / (counts[c] ** float(power)) for _, c in samples]
+    weights_t = torch.as_tensor(weights, dtype=torch.double)
+    return WeightedRandomSampler(weights_t, num_samples=len(samples), replacement=True)
 
 
 def split_train_val(

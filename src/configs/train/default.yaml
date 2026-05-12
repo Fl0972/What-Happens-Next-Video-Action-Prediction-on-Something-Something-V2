@@ -1,11 +1,26 @@
 # @package _global_
+# Default training recipe. Tuned for the existing tsm_pretrained run; closed-track
+# experiments override the relevant fields (optimizer, scheduler, label_smoothing,
+# weight_decay, longer epochs, etc.).
 training:
   batch_size: 8
   lr: 0.0001
   epochs: 25
-  num_workers: 2
+  num_workers: 8
   # Where to save the best checkpoint (by validation accuracy)
-  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_pretrained_18_tta3.pt
+  checkpoint_path: ${hydra:runtime.cwd}/../models/r2plus1d_closed1.pt
   device: cuda
-  mixup_alpha: 0.4   # Beta distribution parameter; 0.0 disables MixUp
-  cutmix_prob: 0.5   # Probability of using CutMix instead of MixUp per batch
+
+  # Optimization
+  optimizer: adam              # adam | adamw | sgd
+  weight_decay: 0.0
+  momentum: 0.9                # only used by sgd
+  scheduler: none              # none | cosine
+  warmup_epochs: 0             # cosine warmup length (linear from 0.01*lr -> lr)
+  label_smoothing: 0.0
+
+  # Regularization / augmentation
+  mixup_alpha: 0.4             # 0 disables MixUp
+  cutmix_prob: 0.5             # P(CutMix instead of MixUp) per batch
+  rand_augment_ops: 0          # 0 disables RandAugment-style ops
+  rand_augment_magnitude: 0.5  # magnitude in [0, 1]

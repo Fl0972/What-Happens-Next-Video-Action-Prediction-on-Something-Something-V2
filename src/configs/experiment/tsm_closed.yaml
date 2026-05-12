@@ -1,0 +1,40 @@
+# @package _global_
+# Track 1 (Closed World) — strong from-scratch recipe on TSM-ResNet18.
+#
+# Classic-DL toolkit applied:
+#   * Architecture: TSM injection on ResNet18 (parameter-free temporal modeling).
+#   * Regularization: stochastic depth on residual branches (linearly to 0.2),
+#     dropout 0.5 before the classifier, label smoothing 0.1, MixUp + CutMix,
+#     RandAugment-style ops (2 ops at magnitude 0.5) on top of the existing
+#     spatial augmentation pipeline.
+#   * Optimization: AdamW with weight decay 5e-4, cosine LR with 5-epoch
+#     linear warmup, 80 epochs total.
+#   * Data: 16 frames per clip (TSM's shifts gather more context with longer
+#     clips); kept at 224x224 input.
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 16
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 8
+  drop_path_rate: 0.2
+  dropout: 0.5
+
+training:
+  epochs: 40
+  batch_size: 8
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine
+  warmup_epochs: 5
+  label_smoothing: 0.1
+  mixup_alpha: 0.4
+  cutmix_prob: 0.5
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_closed.pt
