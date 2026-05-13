@@ -1,0 +1,21 @@
+Traceback (most recent call last):
+  File "/users/eleves-a/2024/andrea.signoretti/Documents/challenge_git/Challenge-Modal/src/train.py", line 23, in <module>
+    import hydra
+ModuleNotFoundError: No module named 'hydra'
+Traceback (most recent call last):
+  File "/users/eleves-a/2024/andrea.signoretti/Documents/challenge_git/Challenge-Modal/src/train.py", line 23, in <module>
+    import hydra
+ModuleNotFoundError: No module named 'hydra'
+Traceback (most recent call last):
+  File "/users/eleves-a/2024/andrea.signoretti/Documents/challenge_git/Challenge-Modal/src/train.py", line 23, in <module>
+    import hydra
+ModuleNotFoundError: No module named 'hydra'
+Traceback (most recent call last):
+  File "/users/eleves-a/2024/andrea.signoretti/Documents/challenge_git/Challenge-Modal/src/train.py", line 23, in <module>
+    import hydra
+ModuleNotFoundError: No module named 'hydra'
+LexerNoViableAltException:  training.checkpoint_path=../models/vfl_ultra_focal.pt
+                           ^
+See https://hydra.cc/docs/1.2/advanced/override_grammar/basic for details
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

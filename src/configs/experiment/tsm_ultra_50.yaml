@@ -1,0 +1,86 @@
+# @package _global_
+# Track 1 (Closed World) — TSM_ultra_50: scaled-up TSM_ultra targeting the
+# ~46% leaderboard tier.
+#
+# Three high-confidence changes vs tsm_ultra (53.32% internal, 34.46% LB):
+#   1. Backbone ResNet18 → ResNet50.
+#      ResNet18 (~11 M params) was at capacity on tsm_ultra (plateau at
+#      epoch 68). ResNet50 (~25 M) has 2× spatial capacity to disentangle
+#      visually similar SSv2 classes (e.g. push/pull, into/out-of).
+#   2. Frames 5 → 8.
+#      SSv2 papers (TSM original, MViT, X3D) all benchmark at 8 or 16
+#      frames. 5 frames was a compute compromise; 8 captures more of the
+#      motion arc that defines each label.
+#   3. Epochs 80 → 120 with SGDR (cosine warm restarts).
+#      Bigger model + more frames needs longer training. SGDR (Loshchilov
+#      & Hutter, ICLR 2017) restarts the LR at full magnitude after each
+#      cycle — the model can escape sharp minima and is empirically more
+#      robust than monotonic cosine for long schedules.
+#
+# Smaller adjustments:
+#   * fold_div 4 → 8: with 8 frames the standard 1/8 mixing is enough;
+#     1/4 was an aggressive compensation for the very short 5-frame clips.
+#   * dropout 0.3 → 0.5 and drop_path 0.1 → 0.2: ResNet50 has 2× the
+#     parameters → needs proportionally more output regularization.
+#   * label_smoothing 0.1 → 0.15: SSv2 has many visually adjacent classes;
+#     softer targets discourage over-confidence on near-misses.
+#   * batch_size 32 (same as TSM_ultra): at batch 16 we measured 8.5 GB / 20 GB
+#     used → plenty of headroom. Batch 32 keeps GPU saturation high and BN
+#     statistics stable.
+#
+# Speed optimization:
+#   * torch.compile enabled (training.compile=true). On R50 + AMP, this
+#     typically delivers 30–40 % throughput improvement at no accuracy cost.
+#     The compiled model is unwrapped (._orig_mod) before saving so the
+#     checkpoint loads cleanly in evaluate.py / create_submission.py.
+#
+# Schedule design:
+#   * 8 epochs linear warmup (0.01·lr → lr) so the from-scratch network
+#     calibrates BN/activations before the cosine cycles begin.
+#   * SGDR T_0=28, T_mult=1 → 4 equal cycles of 28 epochs after warmup
+#     (8 + 4×28 = 120 epochs total). Restarts at epochs 36, 64, 92.
+#   * 10 epochs of regularization warmup (MixUp/CutMix disabled) — same
+#     cold-start fix that took VFL from 9.45% → 45.78%.
+#
+# Expected wall-clock on a 20-GB GPU with AMP:
+#   * ~10-15 min/epoch (R50 8f batch 16, vs ~3 min/epoch for R18 5f
+#     batch 32 in tsm_ultra). 120 epochs ≈ 12-18 hours.
+#   * If too slow, drop to batch_size 12 or 96 epochs; both keep the
+#     architecture story intact.
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 8
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet50
+  fold_div: 8
+  drop_path_rate: 0.2
+  dropout: 0.5
+
+training:
+  epochs: 120
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine_warm_restarts
+  warmup_epochs: 8
+  sgdr_t0: 28
+  sgdr_t_mult: 1
+  compile: true
+  compile_mode: default
+  reg_warmup_epochs: 10
+  label_smoothing: 0.15
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_ultra_50.pt

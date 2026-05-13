@@ -1,0 +1,57 @@
+# @package _global_
+# Track 1 (Closed World) — VideoFormer-Lite Ultra + Focal Loss.
+#
+# Identical to video_former_lite_ultra (53.37% internal val @ 100 epochs)
+# with one change: focal loss (gamma=2.0) replaces standard cross-entropy.
+#
+# Rationale:
+#   The SSv2 paper deliberately creates action groups with near-identical
+#   visual appearance (e.g. "Pretending to pour" vs "Pouring", "Poking so
+#   it falls over" vs "Poking so it slightly moves"). VFL's global temporal
+#   attention is theoretically better suited than TSM for these "pretending"
+#   classes — it can directly compare the object state across frame 1 and
+#   frame 4. But standard CE treats all errors equally.
+#   Focal loss concentrates the gradient on the hard within-group pairs
+#   where VFL already has an architectural advantage, potentially breaking
+#   the 53.37% ceiling.
+#
+# Wall-clock estimate: ~3.5 min/epoch × 100 ≈ 5.8h on a single A4000.
+# Run on GPU 1: training.device=cuda:1
+
+defaults:
+  - override /model: video_former_lite
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  d_model: 512
+  n_heads: 8
+  n_layers: 2
+  mlp_ratio: 4.0
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.1
+  dropout: 0.2
+
+training:
+  epochs: 100
+  batch_size: 32
+  lr: 0.0005
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/vfl_ultra_focal.pt

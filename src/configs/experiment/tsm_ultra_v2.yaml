@@ -1,0 +1,68 @@
+# @package _global_
+# Track 1 (Closed World) — TSM_ultra v2.
+#
+# Every video in this dataset is exactly 4 frames (the "What Happens Next?"
+# framing extracts exactly 4 JPEG frames per clip). num_frames > 4 duplicates
+# frames via linspace interpolation — no new temporal information, and the
+# duplicated tokens corrupt the temporal shift signal. tsm_ultra_50 used
+# num_frames=8 and only reached 45%, which this explains.
+#
+# Changes vs tsm_ultra (53.32% internal val @ 80 epochs):
+#
+#   * num_frames 5 -> 4
+#       5 was already duplicating one frame. 4 is the correct value: every
+#       sampled frame is unique and carries independent temporal information.
+#
+#   * fold_div 4 (unchanged)
+#       With only 4 frames, fold_div=4 (shifting 1/4 of channels in each
+#       direction = 50% total participation) is correct: aggressive enough
+#       to propagate context across the shallow temporal depth of 4 frames.
+#
+#   * epochs 80 -> 100
+#       TSM_ultra was still improving at epoch 80 (last new best at epoch 75,
+#       +0.2pp per 5 epochs). 100 epochs uses the full cosine schedule tail.
+#
+#   * focal_gamma 2.0 (new)
+#       The SSv2 paper (Goyal et al., 2017) deliberately groups near-identical
+#       action classes (e.g. "Poking so it falls over" vs "Poking so it slightly
+#       moves" vs "Poking so it doesn't move"). Standard cross-entropy treats all
+#       misclassifications equally. Focal loss downweights easy examples via
+#       (1-p_t)^gamma, concentrating gradient on these hard within-group pairs.
+#       gamma=2 is the standard value (Lin et al., RetinaNet 2017).
+#
+# Wall-clock estimate: ~3.5 min/epoch × 100 ≈ 5.8h on a single A4000.
+# Run on GPU 0: training.device=cuda:0
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 4
+  drop_path_rate: 0.1
+  dropout: 0.3
+
+training:
+  epochs: 100
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_ultra_v2.pt

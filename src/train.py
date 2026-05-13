@@ -109,13 +109,22 @@ def build_optimizer(model: nn.Module, cfg: DictConfig) -> torch.optim.Optimizer:
 
 
 def build_scheduler(optimizer: torch.optim.Optimizer, cfg: DictConfig):
-    """Cosine annealing with optional linear warmup. Returns None if disabled."""
+    """Cosine annealing with optional linear warmup. Returns None if disabled.
+
+    Supported schedulers:
+      * ``cosine`` — linear warmup + plain CosineAnnealingLR.
+      * ``cosine_warm_restarts`` — linear warmup + SGDR
+        (CosineAnnealingWarmRestarts). Reads ``training.sgdr_t0`` (initial
+        cycle length, default = (epochs - warmup) // 4) and
+        ``training.sgdr_t_mult`` (cycle multiplier, default 1 = equal cycles).
+    """
     name = str(cfg.training.get("scheduler", "none")).lower()
     if name == "none":
         return None
     epochs = int(cfg.training.epochs)
+    warmup = int(cfg.training.get("warmup_epochs", 0))
+
     if name == "cosine":
-        warmup = int(cfg.training.get("warmup_epochs", 0))
         if warmup <= 0:
             return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         warm = torch.optim.lr_scheduler.LinearLR(
@@ -127,6 +136,23 @@ def build_scheduler(optimizer: torch.optim.Optimizer, cfg: DictConfig):
         return torch.optim.lr_scheduler.SequentialLR(
             optimizer, [warm, cosine], milestones=[warmup]
         )
+
+    if name == "cosine_warm_restarts":
+        post_warmup = max(1, epochs - warmup)
+        t_0 = int(cfg.training.get("sgdr_t0", max(1, post_warmup // 4)))
+        t_mult = int(cfg.training.get("sgdr_t_mult", 1))
+        sgdr = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=t_0, T_mult=t_mult
+        )
+        if warmup <= 0:
+            return sgdr
+        warm = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup
+        )
+        return torch.optim.lr_scheduler.SequentialLR(
+            optimizer, [warm, sgdr], milestones=[warmup]
+        )
+
     raise ValueError(f"Unknown training.scheduler: {name}")
 
 
@@ -315,8 +341,28 @@ def main(cfg: DictConfig) -> None:
     )
 
     model = build_model(cfg).to(device)
+
+    compile_enabled = bool(cfg.training.get("compile", False)) and device.type == "cuda"
+    if compile_enabled:
+        compile_mode = str(cfg.training.get("compile_mode", "default"))
+        print(f"torch.compile enabled (mode={compile_mode}).", flush=True)
+        model = torch.compile(model, mode=compile_mode)
+
     label_smoothing = float(cfg.training.get("label_smoothing", 0.0))
-    loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    focal_gamma = float(cfg.training.get("focal_gamma", 0.0))
+    if focal_gamma > 0:
+        class _FocalLoss(nn.Module):
+            def __init__(self, gamma: float, smoothing: float) -> None:
+                super().__init__()
+                self.gamma = gamma
+                self._ce = nn.CrossEntropyLoss(label_smoothing=smoothing, reduction="none")
+            def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+                ce = self._ce(logits, labels)
+                return ((1.0 - torch.exp(-ce)) ** self.gamma * ce).mean()
+        loss_fn: nn.Module = _FocalLoss(focal_gamma, label_smoothing)
+        print(f"Using Focal loss (gamma={focal_gamma}, label_smoothing={label_smoothing}).")
+    else:
+        loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
 
@@ -380,8 +426,10 @@ def main(cfg: DictConfig) -> None:
 
         if val_acc > best_val_accuracy:
             best_val_accuracy = val_acc
+            # Unwrap torch.compile so state_dict keys do not get the "_orig_mod." prefix
+            uncompiled_model = getattr(model, "_orig_mod", model)
             payload: Dict[str, Any] = {
-                "model_state_dict": model.state_dict(),
+                "model_state_dict": uncompiled_model.state_dict(),
                 "model_name": cfg.model.name,
                 "num_classes": int(cfg.model.num_classes),
                 "pretrained": bool(cfg.model.pretrained),
