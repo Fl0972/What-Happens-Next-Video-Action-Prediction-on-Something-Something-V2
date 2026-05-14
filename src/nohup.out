@@ -19,3 +19,8 @@ LexerNoViableAltException:  training.checkpoint_path=../models/vfl_ultra_focal.p
 See https://hydra.cc/docs/1.2/advanced/override_grammar/basic for details
 
 Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+LexerNoViableAltException:  training.checkpoint_path=../models/vfl_ultra_focal.pt
+                           ^
+See https://hydra.cc/docs/1.2/advanced/override_grammar/basic for details
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
