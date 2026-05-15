@@ -29,22 +29,32 @@ from torch.utils.data import DataLoader
 
 from dataset.video_dataset import VideoFrameDataset, _list_frame_paths
 from train import build_model
-from utils import build_transforms, set_seed
+from utils import build_flip_perm, build_transforms, set_seed
 
 
 def _multi_view_logits(
     model: torch.nn.Module,
     video_batch: torch.Tensor,
     max_views_per_step: int,
+    flip_perm: torch.Tensor | None = None,
+    spatial_tta: bool = False,
 ) -> torch.Tensor:
-    """video_batch: (B, N, T, C, H, W) -> logits: (B, num_classes), chunked."""
+    """video_batch: (B, N, T, C, H, W) -> logits: (B, num_classes), chunked.
+
+    See ``evaluate.py`` for ``flip_perm`` semantics: when spatial TTA is on,
+    every odd-indexed view is the hflipped one; its logits are reindexed by
+    ``flip_perm`` so direction-encoded mirror classes stay consistent.
+    """
     B, N, T, C, H, W = video_batch.shape
     flat = video_batch.reshape(B * N, T, C, H, W)
     out_chunks = []
     for s in range(0, B * N, max(1, max_views_per_step)):
         out_chunks.append(model(flat[s : s + max_views_per_step]))
-    out = torch.cat(out_chunks, dim=0)
-    return out.view(B, N, -1).mean(dim=1)
+    out = torch.cat(out_chunks, dim=0).view(B, N, -1)
+    if flip_perm is not None and spatial_tta:
+        flip_idx = torch.arange(1, N, 2, device=out.device)
+        out[:, flip_idx, :] = out[:, flip_idx, :].index_select(2, flip_perm.to(out.device))
+    return out.mean(dim=1)
 
 
 def load_manifest_video_names(manifest_path: Path) -> List[str]:
@@ -144,6 +154,8 @@ def run_inference_logits(
     use_amp: bool = False,
     amp_dtype: torch.dtype = torch.bfloat16,
     eval_view_chunk: int = 4,
+    flip_perm: torch.Tensor | None = None,
+    spatial_tta: bool = False,
 ) -> torch.Tensor:
     """Run the model on the loader; return softmax probabilities (N, num_classes).
 
@@ -161,7 +173,10 @@ def run_inference_logits(
 
         with autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             if multi_view:
-                logits = _multi_view_logits(model, video_batch, eval_view_chunk)
+                logits = _multi_view_logits(
+                    model, video_batch, eval_view_chunk,
+                    flip_perm=flip_perm, spatial_tta=spatial_tta,
+                )
             else:
                 logits = model(video_batch)
 
@@ -329,6 +344,18 @@ def main(cfg: DictConfig) -> None:
     if multi_view:
         print(f"View chunk size: {eval_view_chunk}", flush=True)
 
+    # Label-aware TTA: when the saved checkpoint declares mirror flip pairs,
+    # rebuild the class-permutation tensor used to remap flipped TTA views.
+    flip_pairs_dict = first_ckpt.get("flip_pairs") or {}
+    flip_pairs_dict = {int(k): int(v) for k, v in flip_pairs_dict.items()}
+    flip_perm = (
+        build_flip_perm(int(first_ckpt.get("num_classes", cfg.model.num_classes)), flip_pairs_dict).to(device)
+        if (use_tta and flip_pairs_dict)
+        else None
+    )
+    if flip_perm is not None:
+        print(f"Label-aware TTA: remapping {len(flip_pairs_dict)} class indices on flipped views.", flush=True)
+
     summed_probs: torch.Tensor | None = None
     for i, ckpt_path in enumerate(checkpoint_paths, start=1):
         print(f"[{i}/{len(checkpoint_paths)}] Loading {ckpt_path.name}", flush=True)
@@ -338,6 +365,7 @@ def main(cfg: DictConfig) -> None:
             model, loader, device, total_videos=len(dataset),
             multi_view=multi_view, use_amp=use_amp, amp_dtype=amp_dtype,
             eval_view_chunk=eval_view_chunk,
+            flip_perm=flip_perm, spatial_tta=use_tta,
         )
         summed_probs = probs if summed_probs is None else summed_probs + probs
 

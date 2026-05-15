@@ -144,6 +144,10 @@ class VideoFrameDataset(Dataset):
         n_avail = len(frame_paths)
 
         views: List[torch.Tensor] = []
+        # Label may get remapped by the transform (label-aware hflip on
+        # direction-encoded SSv2 classes). Only the n_clips=1, training-mode
+        # path actually mutates it; TTA / multi-clip eval keeps it as-is.
+        out_label = int(label)
         for clip_idx in range(self.n_clips):
             if self.temporal_jitter:
                 indices = _pick_frame_indices_tsn(n_avail, self.num_frames)
@@ -160,10 +164,15 @@ class VideoFrameDataset(Dataset):
             if self.tta:
                 views.append(self.transform.tta(pil_frames))    # (10, T, C, H, W)
             else:
-                views.append(self.transform(pil_frames))         # (T, C, H, W)
+                result = self.transform(pil_frames, label=out_label)
+                if isinstance(result, tuple):
+                    view, out_label = result
+                else:
+                    view = result
+                views.append(view)                               # (T, C, H, W)
 
         if self.n_clips == 1:
-            return views[0], torch.tensor(label, dtype=torch.long)
+            return views[0], torch.tensor(out_label, dtype=torch.long)
 
         # Multi-clip: stack along view dim, then flatten any spatial-TTA dim
         # into the same view axis so downstream code only sees (N, T, C, H, W).

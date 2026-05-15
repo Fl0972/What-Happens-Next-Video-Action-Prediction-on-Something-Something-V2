@@ -33,6 +33,7 @@ from models.tsm_resnet import TSMResNet
 from utils import (
     build_transforms,
     cutmix_data,
+    discover_flip_pairs,
     mixed_loss,
     mixup_data,
     set_seed,
@@ -203,8 +204,36 @@ def main(cfg: DictConfig) -> None:
         all_samples, val_ratio=float(cfg.dataset.val_ratio), seed=int(cfg.dataset.seed)
     )
 
+    # Optional: merge pseudo-labeled test samples into the *train* pool only
+    # (val_samples stays clean so in-training val_acc remains an honest signal).
+    pseudo_path = cfg.dataset.get("pseudo_labels_path")
+    if pseudo_path:
+        import csv as _csv
+        threshold = float(cfg.dataset.get("pseudo_threshold", 0.85))
+        kept: List[Tuple[Path, int]] = []
+        total = 0
+        with open(str(pseudo_path), newline="", encoding="utf-8") as _f:
+            for row in _csv.DictReader(_f):
+                total += 1
+                if float(row["confidence"]) >= threshold:
+                    kept.append((Path(row["video_path"]), int(row["pseudo_label"])))
+        print(
+            f"Pseudo-labels: kept {len(kept)}/{total} test videos at "
+            f"confidence ≥ {threshold} (from {pseudo_path})."
+        )
+        train_samples = list(train_samples) + kept
+
     use_imagenet_norm = bool(cfg.model.pretrained)
-    train_transform = build_transforms(is_training=True,  use_imagenet_norm=use_imagenet_norm)
+    label_aware_flip = bool(cfg.training.get("label_aware_flip", True))
+    flip_pairs = discover_flip_pairs(class_names) if label_aware_flip else {}
+    if flip_pairs:
+        readable = {class_names[i]: class_names[j] for i, j in flip_pairs.items()}
+        print(f"Label-aware hflip enabled — {len(flip_pairs)//2} mirror pair(s):")
+        for src, dst in readable.items():
+            print(f"  {src}  <-flip->  {dst}")
+    train_transform = build_transforms(
+        is_training=True,  use_imagenet_norm=use_imagenet_norm, flip_pairs=flip_pairs,
+    )
     eval_transform  = build_transforms(is_training=False, use_imagenet_norm=use_imagenet_norm)
 
     num_frames = int(cfg.dataset.num_frames)
@@ -317,6 +346,10 @@ def main(cfg: DictConfig) -> None:
             "val_accuracy": val_acc,
             "ema": ema,
             "config": OmegaConf.to_container(cfg, resolve=True),
+            # Persist class folder names + label-aware flip pairs so inference
+            # can rebuild the TTA logit permutation without re-scanning train_dir.
+            "class_names": list(class_names),
+            "flip_pairs": dict(flip_pairs),
         }
         if cfg.model.name == "cnn_lstm":
             payload["lstm_hidden_size"] = int(cfg.model.get("lstm_hidden_size", 512))
