@@ -16,11 +16,31 @@ from typing import Any, Dict
 import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
+from torch.amp import autocast
 from torch.utils.data import DataLoader
 
 from dataset.video_dataset import VideoFrameDataset, collect_video_samples
 from train import build_model
 from utils import build_transforms, set_seed
+
+
+def _multi_view_logits(
+    model: torch.nn.Module,
+    video_batch: torch.Tensor,
+    max_views_per_step: int,
+) -> torch.Tensor:
+    """video_batch: (B, N, T, C, H, W) -> logits: (B, num_classes).
+
+    Splits the (B*N) views into chunks of ``max_views_per_step`` to avoid OOM
+    when N is large (e.g. 30 = 3 temporal clips × 10 spatial crops).
+    """
+    B, N, T, C, H, W = video_batch.shape
+    flat = video_batch.reshape(B * N, T, C, H, W)
+    out_chunks = []
+    for s in range(0, B * N, max(1, max_views_per_step)):
+        out_chunks.append(model(flat[s : s + max_views_per_step]))
+    out = torch.cat(out_chunks, dim=0)        # (B*N, num_classes)
+    return out.view(B, N, -1).mean(dim=1)     # (B, num_classes)
 
 
 def load_model_from_checkpoint(checkpoint: Dict[str, Any], device: torch.device) -> torch.nn.Module:
@@ -59,8 +79,11 @@ def main(cfg: DictConfig) -> None:
 
     num_frames = int(raw.get("num_frames", cfg.dataset.num_frames))
     use_tta = bool(cfg.dataset.get("tta", False))
-    if use_tta:
-        print("TTA enabled: averaging over 10 crops.")
+    n_clips = max(1, int(cfg.dataset.get("n_clips", 1)))
+    n_views = (10 if use_tta else 1) * n_clips
+    if use_tta or n_clips > 1:
+        print(f"TTA enabled: {n_views} views/video "
+              f"({n_clips} temporal clip(s) × {10 if use_tta else 1} spatial crop(s)).")
 
     val_dataset = VideoFrameDataset(
         root_dir=val_dir,
@@ -68,6 +91,7 @@ def main(cfg: DictConfig) -> None:
         transform=eval_transform,
         sample_list=val_samples,
         tta=use_tta,
+        n_clips=n_clips,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -77,6 +101,13 @@ def main(cfg: DictConfig) -> None:
         pin_memory=(device.type == "cuda"),
     )
 
+    use_amp = bool(cfg.training.get("amp", True)) and device.type == "cuda"
+    amp_dtype_str = str(cfg.training.get("amp_dtype", "bfloat16")).lower()
+    amp_dtype = torch.bfloat16 if amp_dtype_str == "bfloat16" else torch.float16
+    eval_view_chunk = max(1, int(cfg.training.get("eval_view_chunk", 4)))
+    if n_views > 1:
+        print(f"View chunk size: {eval_view_chunk} (forwards per video: {n_views // eval_view_chunk + (n_views % eval_view_chunk > 0)})")
+
     correct_top1 = 0
     correct_top5 = 0
     total = 0
@@ -84,14 +115,12 @@ def main(cfg: DictConfig) -> None:
     with torch.no_grad():
         for video_batch, labels in val_loader:
             labels = labels.to(device)
-
-            if use_tta:
-                # video_batch: (B, 10, T, C, H, W) — average logits over 10 crops
-                B, N, T, C, H, W = video_batch.shape
-                logits = model(video_batch.to(device).view(B * N, T, C, H, W))
-                logits = logits.view(B, N, -1).mean(dim=1)
-            else:
-                logits = model(video_batch.to(device))
+            video_batch = video_batch.to(device)
+            with autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                if n_views > 1:
+                    logits = _multi_view_logits(model, video_batch, eval_view_chunk)
+                else:
+                    logits = model(video_batch)
 
             correct_top1 += int((logits.argmax(1) == labels).sum().item())
 

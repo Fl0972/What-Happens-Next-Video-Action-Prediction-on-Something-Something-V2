@@ -1,0 +1,12 @@
+# @package _global_
+# VideoMAE ViT-B/16 (Tong et al., NeurIPS 2022, arXiv:2203.12602).
+# Default checkpoint is finetuned on Something-Something v2 by MCG-NJU.
+# Uses the HuggingFace `transformers` implementation under the hood.
+model:
+  name: videomae
+  pretrained: true
+  num_classes: ${num_classes}
+  num_frames: ${dataset.num_frames}        # MUST be 16 for the SSv2 checkpoint
+  checkpoint: MCG-NJU/videomae-base-finetuned-ssv2
+  gradient_checkpointing: false            # set true to halve activation memory at ~30% speed cost
+  warm_start_head_from_ssv2: true          # init the new head from matching SSv2 head rows (vs random)

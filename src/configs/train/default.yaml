@@ -1,11 +1,22 @@
 # @package _global_
 training:
   batch_size: 8
-  lr: 0.0001
+  lr: 0.0001        # initial/base LR (used as min_lr by OneCycleLR)
+  max_lr: 0.001     # peak LR for cosine schedule with warmup
+  weight_decay: 0.05
   epochs: 25
   num_workers: 2
   # Where to save the best checkpoint (by validation accuracy)
-  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_pretrained_18_tta3.pt
+  checkpoint_path: ${hydra:runtime.cwd}/../models/videomae_3_top3_top1.pt
   device: cuda
-  mixup_alpha: 0.4   # Beta distribution parameter; 0.0 disables MixUp
-  cutmix_prob: 0.5   # Probability of using CutMix instead of MixUp per batch
+  mixup_alpha: 0.4         # Beta distribution parameter; 0.0 disables MixUp
+  cutmix_prob: 0.5         # Probability of using CutMix instead of MixUp per batch
+  label_smoothing: 0.1     # CrossEntropyLoss label smoothing
+  amp: true                # Mixed-precision (autocast) on CUDA — also used at inference
+  amp_dtype: bfloat16      # 'bfloat16' (Ada/Ampere) or 'float16'
+  eval_view_chunk: 4       # Inference: views processed per forward pass (caps GPU mem)
+  ema_decay: 0.999         # EMA of weights; set to 0.0 to disable
+  top_k_checkpoints: 3     # Save top-K checkpoints by val acc (snapshot ensemble)
+  ensemble_top_k: 3        # At inference, ensemble this many top-K snapshots
+  # Optional: an explicit list of checkpoints to ensemble (overrides ensemble_top_k)
+  # checkpoint_paths: [${hydra:runtime.cwd}/../models/foo.pt, ${hydra:runtime.cwd}/../models/bar.pt]

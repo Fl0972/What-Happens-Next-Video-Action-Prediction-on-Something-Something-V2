@@ -1,10 +1,10 @@
 # Main Hydra config: composes model, data, train, and experiment bundle.
 # Run from `src/`:  python train.py experiment=cnn_lstm
 defaults:
-  - model: tsm_resnet
+  - model: videomae
   - data: default
   - train: default
-  - experiment: tsm_pretrained
+  - experiment: videomae
   - _self_
 
 # Optional: where Hydra stores run outputs (checkpoints printed in train.py)

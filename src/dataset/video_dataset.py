@@ -93,6 +93,29 @@ def _pick_frame_indices_tsn(num_available: int, num_frames: int) -> List[int]:
     return indices
 
 
+def _pick_frame_indices_multi(
+    num_available: int, num_frames: int, clip_idx: int, n_clips: int
+) -> List[int]:
+    """
+    Multi-clip uniform sampling: produces ``n_clips`` deterministic but
+    distinct frame samplings. Within each segment of length ``seg``, the
+    k-th clip uses an offset of ``(k+0.5) * seg / n_clips`` — so the clips
+    cover non-overlapping sub-positions within each segment.
+    """
+    if num_available <= 0:
+        raise ValueError("Video has no frames.")
+    if num_available == 1:
+        return [0] * num_frames
+    seg = num_available / num_frames
+    offset = (clip_idx + 0.5) * seg / max(n_clips, 1)
+    indices: List[int] = []
+    for i in range(num_frames):
+        idx = int(round(i * seg + offset))
+        idx = max(0, min(idx, num_available - 1))
+        indices.append(idx)
+    return indices
+
+
 class VideoFrameDataset(Dataset):
     def __init__(
         self,
@@ -102,12 +125,14 @@ class VideoFrameDataset(Dataset):
         sample_list: Optional[List[Tuple[Path, int]]] = None,
         temporal_jitter: bool = False,
         tta: bool = False,
+        n_clips: int = 1,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.num_frames = num_frames
         self.transform = transform
         self.temporal_jitter = temporal_jitter
         self.tta = tta
+        self.n_clips = max(1, int(n_clips))
         self.samples = list(sample_list) if sample_list is not None else collect_video_samples(self.root_dir)
 
     def __len__(self) -> int:
@@ -116,18 +141,34 @@ class VideoFrameDataset(Dataset):
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         video_dir, label = self.samples[index]
         frame_paths = _list_frame_paths(video_dir)
+        n_avail = len(frame_paths)
 
-        pick = _pick_frame_indices_tsn if self.temporal_jitter else _pick_frame_indices
-        indices = pick(len(frame_paths), self.num_frames)
+        views: List[torch.Tensor] = []
+        for clip_idx in range(self.n_clips):
+            if self.temporal_jitter:
+                indices = _pick_frame_indices_tsn(n_avail, self.num_frames)
+            elif self.n_clips > 1:
+                indices = _pick_frame_indices_multi(n_avail, self.num_frames, clip_idx, self.n_clips)
+            else:
+                indices = _pick_frame_indices(n_avail, self.num_frames)
 
-        pil_frames: List[Image.Image] = []
-        for fi in indices:
-            with Image.open(frame_paths[fi]) as img:
-                pil_frames.append(img.convert("RGB"))
+            pil_frames: List[Image.Image] = []
+            for fi in indices:
+                with Image.open(frame_paths[fi]) as img:
+                    pil_frames.append(img.convert("RGB"))
 
-        if self.tta:
-            video_tensor = self.transform.tta(pil_frames)   # (10, T, C, H, W)
-        else:
-            video_tensor = self.transform(pil_frames)        # (T, C, H, W)
+            if self.tta:
+                views.append(self.transform.tta(pil_frames))    # (10, T, C, H, W)
+            else:
+                views.append(self.transform(pil_frames))         # (T, C, H, W)
 
-        return video_tensor, torch.tensor(label, dtype=torch.long)
+        if self.n_clips == 1:
+            return views[0], torch.tensor(label, dtype=torch.long)
+
+        # Multi-clip: stack along view dim, then flatten any spatial-TTA dim
+        # into the same view axis so downstream code only sees (N, T, C, H, W).
+        stacked = torch.stack(views, dim=0)
+        if stacked.dim() == 6:
+            # (n_clips, 10, T, C, H, W) -> (n_clips*10, T, C, H, W)
+            stacked = stacked.view(stacked.shape[0] * stacked.shape[1], *stacked.shape[2:])
+        return stacked, torch.tensor(label, dtype=torch.long)

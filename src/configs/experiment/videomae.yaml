@@ -1,0 +1,26 @@
+# @package _global_
+# Track 2 (Open World): VideoMAE ViT-B/16 finetuned from SSv2-pretrained weights.
+#
+# Fine-tuning hyperparameters differ from the TSM defaults:
+#   - lower LR (ViTs are sensitive to large LR on pretrained weights)
+#   - smaller batch size (ViT-B activations at 16 frames are large)
+#   - fewer epochs (SSv2-pretrained features converge fast on a related task)
+defaults:
+  - override /model: videomae
+
+training:
+  batch_size: 4
+  num_workers: 4
+  lr: 0.00001         # base/min LR (head); LLRD scales lower layers down by llrd_decay**depth
+  max_lr: 0.00005     # peak LR (head); each layer's max_lr = max_lr * llrd_decay**depth
+  weight_decay: 0.05
+  epochs: 20
+  ema_decay: 0.999
+  layerwise_lr_decay: true   # ViT-style depth-wise LR scaling (BEiT/MAE recipe)
+  llrd_decay: 0.75           # 0.65–0.75 typical; 0.75 = gentler, 0.65 = stronger decay
+  # ViT activations are big — keep view-chunk small at inference
+  eval_view_chunk: 2
+  checkpoint_path: ${hydra:runtime.cwd}/../models/videomae_3_top3_top1.pt
+
+dataset:
+  num_frames: 16      # required by the VideoMAE-B SSv2 checkpoint

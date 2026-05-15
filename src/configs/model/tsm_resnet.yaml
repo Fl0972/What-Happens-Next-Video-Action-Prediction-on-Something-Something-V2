@@ -5,6 +5,6 @@ model:
   name: tsm_resnet
   pretrained: true
   num_classes: ${num_classes}
-  backbone: resnet18
+  backbone: resnet18    # 'resnet18' or 'resnet50'. R50 paired with AMP fits an RTX 4000 Ada.
   num_frames: ${dataset.num_frames}
   fold_div: 8
