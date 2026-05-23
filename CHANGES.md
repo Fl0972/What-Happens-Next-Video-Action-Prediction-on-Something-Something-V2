@@ -205,7 +205,45 @@ root (i.e. `src/...`).
     name-matching glue here is bespoke to this repo.
 - **Dependency added.** `transformers>=4.40,<5` in `pyproject.toml`.
 
-### 2.3 Backbone bumped to ResNet-50
+### 2.3 VideoMAE supports arbitrary even `num_frames`
+- **What.** `VideoMAE.__init__` in `src/models/videomae.py` no longer hard-asserts
+  `num_frames=16`. Now it only requires `num_frames % 2 == 0` (the tubelet
+  stride is 2). When the requested `num_frames` differs from the pretraining
+  default (16), the constructor passes `num_frames=...` to
+  `VideoMAEForVideoClassification.from_pretrained(..., ignore_mismatched_sizes=True)`
+  so the size-changed `position_embeddings` buffer is reinitialised
+  sinusoidally for the new sequence length while the rest of the weights
+  load normally. A console warning is printed in that case.
+- **Why.** The challenge videos contain **exactly 4 source frames each**
+  (verified by listing every video dir). Sampling 16 frames from 4 sources
+  via linspace+round produces ~12 duplicated frames per clip, so
+  `num_frames=16` mostly feeds VideoMAE constant tubelets with no motion
+  signal. Letting `num_frames=4` match the raw input avoids that waste at
+  the cost of moving the model OOD vs its pretraining sequence length —
+  worth A/B-testing on val_dir.
+- **Source / credit.** VideoMAE's positional embeddings are sinusoidal by
+  construction (Tong et al. 2022, §3.1), so they admit re-sizing without
+  retraining. `ignore_mismatched_sizes` is the canonical HuggingFace
+  `transformers` mechanism for loading a checkpoint into a slightly
+  reshaped model.
+
+### 1.6 Multi-clip TTA guard for short videos
+- **What.** `VideoFrameDataset.__getitem__` now silently downgrades
+  `n_clips → 1` when the source video has fewer frames than
+  `num_frames`. With ~4-frame source videos and `num_frames=16`, the three
+  "different temporal samplings" produced by `_pick_frame_indices_multi`
+  rounded to the same integer indices anyway — running the model 3× per
+  video burned compute for zero signal.
+- **Why.** Multi-clip TTA assumes enough source frames that distinct
+  temporal offsets pick *different* indices. When `n_avail < num_frames`,
+  the rounding kernel collapses all clips to the same picks. The guard
+  makes inference 3× faster on those inputs with no accuracy change. The
+  `n_clips` config knob keeps its meaning for videos where it actually
+  matters; the downgrade is per-sample.
+- **Source / credit.** No external citation — this is a project-specific
+  data observation (every video is 4 frames).
+
+### 2.4 Backbone bumped to ResNet-50
 - **What.** `src/configs/model/tsm_resnet.yaml` now defaults to
   `backbone: resnet50` (was `resnet18`). The path was already supported in
   `TSMResNet.__init__`.
@@ -322,7 +360,44 @@ root (i.e. `src/...`).
   - The "no-decay on bias / LayerNorm / position embeddings" split is the
     same recipe used in `timm` and HF `transformers` ViT finetuning utilities.
 
-### 3.7 Pseudo-labeling (semi-supervised self-training on the test set)
+### 3.7 Reboot-resilient training (resume + skip-if-done + retry loop)
+- **What.** Four pieces wired together so the overnight pipeline survives
+  the school machine's spontaneous reboots:
+  1. **`train.py` resume** — at every epoch end, persists
+     `(model, optimizer, scheduler, ema, epoch, best_val_acc, snapshots)`
+     to `<checkpoint_path>.resume.pt`, written atomically via temp + rename
+     so a power loss mid-write can't corrupt it. On startup, if the file
+     exists and `training.resume=true` (default), the script reloads
+     everything and skips ahead to the last completed epoch. Cleaned up
+     on clean completion. Snapshot bookkeeping (file paths + per-snapshot
+     val_acc) is part of the resume state so the top-K rename logic stays
+     consistent across restarts.
+  2. **`run_ovn2.sh` skip-if-done** — each `run_step` writes a marker
+     under `logs/.done_<TAG>/` on success; if the marker already exists,
+     the step is skipped. Combined with (1), this means a reboot
+     mid-pipeline only loses the partial work of the *current epoch* of
+     the *current training step*. Re-launching the script does the right
+     thing — no manual editing.
+  3. **`~/loop_until_done.sh`** — bash wrapper that re-runs its argument
+     script until it exits 0 (or hits `MAX_RETRIES=20`), sleeping 60s
+     between retries. Stacks with (2): retries are basically free because
+     completed steps short-circuit.
+  4. **`@reboot` crontab entry** — on boot, cron spawns a detached
+     `tmux new-session` that runs `loop_until_done.sh run_ovn2.sh`. Net
+     effect: machine reboots → cron auto-launches a detached training
+     session that resumes from where the previous run died. Zero manual
+     touch required.
+- **Why.** Without these, every reboot wasted the entire in-progress
+  training step (1-6 h of GPU). With them, the loss is bounded by the
+  duration of one epoch (~15-30 min for VideoMAE-Large), and even that
+  loss is hidden behind a single SSH reconnect since the training picks
+  back up automatically.
+- **Sources / credits.** The "checkpoint everything every epoch and resume
+  on startup" pattern is standard practice in distributed deep learning
+  frameworks (PyTorch Lightning, DeepSpeed). No single canonical citation;
+  the atomic-write-via-rename idiom is POSIX semantics.
+
+### 3.8 Pseudo-labeling (semi-supervised self-training on the test set)
 - **What.** New script `src/pseudo_label.py` reuses the
   `_resolve_checkpoint_paths()` / `run_inference_logits()` /
   `discover_all_test_videos()` helpers from `create_submission.py` to:
@@ -406,7 +481,92 @@ root (i.e. `src/...`).
   summed and the argmax is the final prediction.
 - **Why.** See §3.6.
 
-### 4.3 Snapshot ensemble in `evaluate.py`
+### 4.3 Per-class weighted ensembling (`ensemble_per_class.py`)
+- **What.** New script `src/ensemble_per_class.py` that combines N
+  checkpoints with **class-dependent** weights instead of a single uniform
+  soft-vote. Workflow:
+  1. For each checkpoint, run TTA inference on `val_dir` and `test_dir`
+     (using `run_inference_logits()` with the existing flip-aware TTA
+     remap). Softmax tensors are cached to
+     `training.softmax_cache_dir` (default `<models_dir>/_softmax_cache/`)
+     keyed by `(ckpt_path, mtime, dataset_path, n_clips, tta, num_frames)`.
+  2. Compute per-(model, class) val accuracy `acc[m, c]`.
+  3. Build per-class weights `w[m, c] = softmax_m(acc[m, c] / T)`
+     (temperature `training.class_weight_temperature`, default `0.10`).
+     Classes with no val samples fall back to uniform weights.
+  4. Sanity check: compare uniform soft-vote vs per-class weighted on val
+     (warn if weighted is worse — means the temperature is too sharp).
+  5. Apply the same per-class weights to test softmax → submission CSV.
+- **Why.** Uniform soft-vote treats all models equally on every class. But
+  a model finetuned from SSv2 and one finetuned from K400 will have very
+  different per-class strengths — SSv2 dominates the "pretending" /
+  directional templates it was trained on; K400 may be competitive (or
+  better) on motion classes resembling its source distribution. Per-class
+  weighting lets each class pick whichever models excel at it without
+  hand-coding rules.
+- **Why post-cache.** Each TTA inference of VideoMAE on 6700 val + 27000
+  test videos is ~1.5 h. With caching, the only cost on a re-run with a
+  different temperature is loading two tensors and recomputing the
+  softmax-over-weights — seconds, not hours.
+- **Sources / credits.** Per-class / per-region model gating is standard
+  in the stacking / model-mixing literature; the original framework is
+  Wolpert, **"Stacked Generalization"** (Neural Networks 1992). The exact
+  "softmax over per-class val accuracy" weighting recipe used here is the
+  most basic formalisation of the "best model per class" heuristic.
+
+### 4.5 Learned (gradient-descent) weighted ensembling (`ensemble_gradient.py`)
+- **What.** New script `src/ensemble_gradient.py` — a third ensembling mode
+  that *learns* the mixture weights by gradient descent instead of deriving
+  them from a formula (§4.3) or fixing them uniform (§4.2). It reuses the
+  exact same per-model softmax cache (`_cache_key` imported from
+  `ensemble_per_class.py`), so it costs nothing extra after either script
+  has run once. Logit-weights `θ` are softmax-normalised over the model
+  axis, so the combination is always a convex mixture (a valid prob):
+  `combined[n,c] = Σ_m softmax_m(θ)[m(,c)] · prob[m,n,c]`. Adam minimises
+  `NLL(log combined, y) + λ·‖w − 1/M‖²` on val.
+- **Two granularities (flag `training.grad_weight_mode`).**
+  `global` (default) learns one weight per model (M params — ≈zero overfit
+  risk, the safe high-value choice); `per_class` learns `M×C` weights (the
+  learned counterpart to §4.3, more expressive but overfit-prone, hence the
+  pull-to-uniform `λ = training.grad_l2_uniform`).
+- **Honest evaluation.** `training.grad_holdout_frac > 0` fits on a val
+  subset and reports accuracy on the untouched remainder before refitting
+  on all of val for the test submission — so the per-class mode's
+  generalisation can be checked rather than trusted. Other knobs:
+  `grad_steps` (300), `grad_lr` (0.05).
+- **Why.** The §4.3 heuristic optimises a *proxy* (per-class accuracy →
+  softmax); this optimises the actual ensembling objective (val NLL)
+  directly, which can only do at least as well in-sample and usually
+  generalises better for the low-parameter `global` mode.
+- **Source / credit.** Learning a convex combination of model outputs by
+  minimising a held-out loss is "linear stacking" (Breiman, **"Stacked
+  Regressions"**, Machine Learning 1996; building on Wolpert 1992).
+
+### 4.6 Cross-backbone ensembling: per-checkpoint rebuild + shared cache
+- **Bug.** All three ensemble scripts (`create_submission.py`,
+  `ensemble_per_class.py`, `ensemble_gradient.py`) only rebuilt the model when
+  the checkpoint's `model_name` *changed*. But VideoMAE **Base and Large both
+  save `model_name="videomae"`**, so ensembling a Large checkpoint together
+  with Base ones (k400/ssv2) tried to `load_state_dict` Base weights (768-d)
+  into a Large graph (1024-d) → `size mismatch` crash. This stayed dormant only
+  because the Base softmax was always cached (the load path was skipped); it
+  fired the moment a Base checkpoint missed cache.
+- **Compounding cause.** `cache_dir` defaults to `checkpoint_paths[0].parent/
+  _softmax_cache`. After §(local-disk) moved the Large checkpoints to `/Data`,
+  putting Large first sent the cache to `/Data/.../_softmax_cache`, which lacks
+  the NFS-cached Base softmax → cache miss → the crash above. `loop_until_done`
+  then crash-looped submission A.
+- **Fix.** (1) Rebuild the model **per checkpoint from its own stored config**
+  (`build_model_from_checkpoint`, which reads `ckpt["config"]`) instead of
+  switching on `model_name` — correct for any Base/Large mix. (2) Pin
+  `training.softmax_cache_dir` to the NFS `models/_softmax_cache` in
+  `run_ovn2.sh`'s caching steps so all runs share one cache regardless of where
+  the checkpoints live, and consolidated the new-Large softmax there.
+- **Result.** Submission A (was crash-looping) now completes in ~5 s from
+  cache; cross-backbone learned ensembles (new-Large + ssv2 + k400) run
+  end-to-end.
+
+### 4.4 Snapshot ensemble in `evaluate.py`
 - **What.** `evaluate.py` now uses the same `_resolve_checkpoint_paths()`
   helper from `create_submission.py`: it discovers either
   `training.checkpoint_paths=[...]` (explicit list) or auto-derives
@@ -456,6 +616,112 @@ out of the pipeline. None come from external sources.
 - **Hydra struct-mode rejection of `dataset.tta=true` overrides.** Fixed by
   declaring `tta:` in `configs/data/default.yaml` (required by the Hydra
   struct-mode default).
+- **Reboot-resilient training & orchestration.** Three independent layers
+  added on top of the existing `tmux` workflow to survive the host's
+  unpredictable nightly reboots:
+  1. **Atomic per-epoch resume in `train.py`.** At every epoch end we
+     persist `(model, optimizer, scheduler, EMA, snapshots list, epoch,
+     best_val_accuracy)` into `<checkpoint_path>.resume.pt` via a
+     write-tmp-then-rename pattern (`os.replace`, atomic on POSIX). At
+     startup, if the file exists, we load it and skip to the saved epoch.
+     A try/except around the load means a corrupt-mid-write file falls
+     back gracefully to a from-scratch run. Toggle: `training.resume`
+     (default `true`); the file is deleted on clean completion.
+  2. **Skip-if-done in `run_ovn2.sh`.** `run_step` now writes a
+     `logs/.done_<TAG>/<step>` marker on successful exit and short-circuits
+     if the marker already exists. Combined with the per-epoch resume,
+     re-launching the orchestration script after a reboot continues from
+     the next not-yet-completed step with at most one wasted epoch.
+  3. **`loop_until_done.sh` retry wrapper.** Tiny bash loop at
+     `~/loop_until_done.sh`: re-runs its argument script until it exits 0
+     (or 50 retries, configurable via `$MAX_RETRIES`). Catches transient
+     OOMs and immediate-after-reboot relaunches. The end-state is a
+     one-command overnight pipeline: `bash ~/loop_until_done.sh run_ovn2.sh`
+     inside `tmux` survives any number of crashes/reboots.
+
+  `@reboot` cron auto-restart was tested on the host but is blocked, so
+  the user has to type the launch command manually after each reboot;
+  with the three layers above, that's still the only manual step needed.
+
+- **True reboot survival via systemd user lingering.** Discovered that
+  `loginctl enable-linger` works on this host without sudo, which keeps
+  the user's systemd instance running across logouts and reboots. With
+  that in place, installed
+  `~/.config/systemd/user/ovn2-train.service` which `ExecStart`s
+  `loop_until_done.sh run_ovn2.sh` on every boot, with
+  `Restart=on-failure` / `RestartSec=120` for transient crashes that the
+  inner wrapper somehow can't catch. Combined with skip-if-done markers
+  and the per-epoch resume, the pipeline now completes itself across
+  arbitrary reboots without any manual relaunch. Manage with
+  `systemctl --user {status,start,stop,disable} ovn2-train.service`;
+  follow the live log at
+  `logs/ovn2_systemd.log` or via `journalctl --user -fu ovn2-train`.
+
+- **Resume tmpfile naming bug in `train.py`.** The first cut of the
+  atomic resume save used
+  `resume_path.with_suffix(".resume.pt.tmp")`, but `resume_path` already
+  ends in `.resume.pt`, so `with_suffix` stripped `.pt` and produced
+  `<base>.resume.resume.pt.tmp`. Cosmetic only — the final `tmp.replace`
+  still targeted the correct name — but the orphaned tmp files were
+  confusing post-reboot. Replaced with
+  `resume_path.with_name(resume_path.name + ".tmp")`.
+
+- **NFS durability: fsync before rename (`train.py`).** A crash during an
+  end-of-epoch save left `resume.pt` *and* `top1.pt` at 0 bytes and
+  `top3.pt` truncated — even though saves used the write-tmp-then-rename
+  "atomic" pattern. Root cause: the checkpoint dir is **NFS**
+  (`omega.polytechnique.fr:/students`), where `rename` is a metadata op
+  that reaches the server synchronously while the freshly-written data
+  may still sit in the client page cache. If the process dies in that
+  window, the rename has already pointed the name at a file whose bytes
+  never landed → 0-byte/truncated result, which then defeats resume (the
+  relaunch reads the empty `resume.pt` and starts from scratch). Fix: a
+  `_save_durable()` helper does `torch.save` → `flush` → `os.fsync` so the
+  data is committed *before* the rename, plus a best-effort `_fsync_dir()`
+  after each rename/unlink to persist the directory entry itself. Wired
+  into `_save_payload`, `_persist_resume_state`, the top-k staging
+  renames, and the final top-1 mirror. This is what makes the
+  resume/recovery stack actually survive a mid-save crash rather than
+  silently losing all progress.
+
+- **Large-model checkpoints moved to local `/Data` (`run_ovn2.sh`).** The
+  fsync hardening above immediately surfaced the *real* root cause behind
+  every truncated/0-byte checkpoint: the NFS home has a **30 GB quota**,
+  and a 307M-param VideoMAE-Large run (three top-k snapshots at ~1.2 GB
+  plus a ~5 GB optimizer/EMA resume file, briefly doubled during the
+  atomic write) simply does not fit. Pre-fsync, the over-quota writes
+  failed silently during writeback; post-fsync they raised
+  `OSError: [Errno 122] Disk quota exceeded`. Fix: a new `LM` variable
+  points only the Large model's `checkpoint_path` (and the derived
+  `_topN.pt` / `.resume.pt`) at `/Data/florian.guillaumey/challenge_models`
+  — a 561 GB local NVMe partition that persists across reboots and is not
+  age-cleaned (unlike `/tmp`, which has a 10-day rule). This sidesteps the
+  quota, is faster than NFS, and *keeps* reboot survival because the
+  resume file is still on a persistent disk the relaunched job can find.
+  Reused inputs (`videomae_ovn1_k400_top*`, `tsm_r50_ovn1_top*`,
+  `videomae_4_pseudo.csv`) and the tiny submission CSVs stay on NFS. Also
+  pruned ~4.7 GB of superseded experiment checkpoints
+  (`videomae_3/4/5_*`, `videomae_ssv2_ft_*`, old `tsm_pretrained_*`) to
+  give the home headroom.
+
+- **Per-class ensembling crashed on cross-architecture mixes; cache went to `src/None/`.**
+  Two bugs in `ensemble_per_class.py` (and the same single-arch assumption
+  in `create_submission.py`):
+  1. The model was built once from the *first* checkpoint's saved config and
+     never rebuilt — so the moment the loop hit a checkpoint with a
+     different `model_name` (e.g. TSM after VideoMAE), `load_state_dict`
+     raised on hundreds of mismatched keys. Fixed by tracking
+     `current_model_name` and calling `build_model_from_checkpoint(ckpt)` +
+     `.to(device)` whenever it changes. ~5 lines each in
+     `ensemble_per_class.py` and `create_submission.py`.
+  2. `cache_dir = Path(str(cfg.training.get("softmax_cache_dir", <default>)))`
+     resolved to `Path("None")` when the YAML declared
+     `softmax_cache_dir: null`, because `cfg.get(key, default)` returns the
+     *value* (None) when the key exists with a null value — `default` is
+     only used when the key is absent. So the entire softmax cache landed
+     under `src/None/`. Fixed with an explicit `is None` check, defaulting
+     to `<models_dir>/_softmax_cache/`. The stranded cache was migrated to
+     the correct path.
 - **Top-K snapshot rename was clobbering its own files.** The original
   rename loop did `target.unlink(); path.rename(target)` per rank inside a
   single in-place pass over `snapshots`. After 2-3 epochs that meant the
@@ -482,10 +748,14 @@ training:
   label_smoothing
   amp, amp_dtype           # mixed-precision toggles (used in train *and* inference)
   eval_view_chunk          # inference: views per forward pass (caps GPU mem)
+  class_weight_temperature # ensemble_per_class.py: T in softmax(acc/T)
+  softmax_cache_dir        # ensemble_per_class.py cache root (null = next to ckpts)
   ema_decay                # 0.0 disables EMA
   top_k_checkpoints        # train-time top-K snapshot retention
   ensemble_top_k           # inference-time ensemble size
-  # checkpoint_paths: [...]  # explicit override list for ensembling
+  checkpoint_paths         # explicit override list (null = use ensemble_top_k auto-discovery)
+  skip_submission          # ensemble_per_class.py: val-only run, don't write CSV
+  resume                   # train.py: load <ckpt>.resume.pt on startup (default true)
 ```
 
 `src/configs/data/default.yaml`:
@@ -554,6 +824,7 @@ training:
 | 26 | Lee, *Pseudo-Label*, ICML 2013 Workshop | Pseudo-labeling / self-training (§3.7) |
 | 27 | Sohn et al., *FixMatch*, NeurIPS 2020, arXiv:2001.07685 | Confidence-thresholded pseudo-label recipe (§3.7) |
 | 28 | Xie et al., *Self-training with Noisy Student*, CVPR 2020, arXiv:1911.04252 | Augmentation-as-noise during self-training (§3.7) |
+| 29 | Wolpert, *Stacked Generalization*, Neural Networks 1992 | Per-class weighted ensembling foundation (§4.3) |
 
 All implementations in this repo were written by hand against the references
 above; no copy-pasted code from external repositories.

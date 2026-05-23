@@ -15,6 +15,7 @@ split; the dedicated ``dataset.val_dir`` is for ``evaluate.py`` only.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -332,6 +333,62 @@ def main(cfg: DictConfig) -> None:
     checkpoint_path = Path(cfg.training.checkpoint_path).resolve()
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # ── Resume from .resume.pt if present ─────────────────────────────────
+    # Reboot-resilient training: every epoch we persist optimizer / scheduler /
+    # EMA / snapshot bookkeeping next to the checkpoint as <base>.resume.pt.
+    # On startup we look for it and pick up where we left off. The file is
+    # deleted on clean completion. Toggle off with training.resume=false.
+    resume_path = checkpoint_path.with_suffix(".resume.pt")
+    start_epoch = 0
+    if bool(cfg.training.get("resume", True)) and resume_path.exists():
+        try:
+            state = torch.load(resume_path, map_location="cpu")
+            model.load_state_dict(state["model_state_dict"])
+            optimizer.load_state_dict(state["optimizer_state_dict"])
+            scheduler.load_state_dict(state["scheduler_state_dict"])
+            if ema_model is not None and state.get("ema_state_dict") is not None:
+                ema_model.load_state_dict(state["ema_state_dict"])
+            start_epoch = int(state["epoch"])
+            best_val_accuracy = float(state.get("best_val_accuracy", 0.0))
+            snapshots = [(float(a), Path(p)) for a, p in state.get("snapshots", [])]
+            # Validate snapshot paths still exist on disk
+            snapshots = [(a, p) for a, p in snapshots if p.exists()]
+            print(
+                f"[resume] Picked up at epoch {start_epoch}/{cfg.training.epochs} "
+                f"(best val so far {best_val_accuracy:.4f}, "
+                f"{len(snapshots)} snapshots on disk)"
+            )
+        except Exception as e:
+            print(f"[resume] WARNING: failed to load {resume_path} ({e}). "
+                  f"Starting from scratch.")
+            start_epoch = 0
+            best_val_accuracy = 0.0
+            snapshots = []
+
+    def _save_durable(obj: Any, path: Path) -> None:
+        """torch.save followed by fsync, so the bytes are committed to the
+        (NFS) server before we return. Without the fsync, a subsequent
+        os.replace/rename — which is a metadata op and reaches the server
+        synchronously — can land *before* the still-buffered data, leaving a
+        0-byte or truncated file if the process/host dies in that window.
+        This is exactly the failure that zeroed resume.pt + top1.pt."""
+        with open(path, "wb") as f:
+            torch.save(obj, f)
+            f.flush()
+            os.fsync(f.fileno())
+
+    def _fsync_dir(path: Path) -> None:
+        """Commit a directory entry (a rename/unlink) to the NFS server.
+        Best-effort: never let a dir-fsync hiccup take down training."""
+        try:
+            fd = os.open(str(path), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
     def _snapshot_path(rank: int) -> Path:
         # rank=1 -> "<base>_top1.pt", etc.
         return checkpoint_path.with_name(f"{checkpoint_path.stem}_top{rank}{checkpoint_path.suffix}")
@@ -353,9 +410,28 @@ def main(cfg: DictConfig) -> None:
         }
         if cfg.model.name == "cnn_lstm":
             payload["lstm_hidden_size"] = int(cfg.model.get("lstm_hidden_size", 512))
-        torch.save(payload, path)
+        _save_durable(payload, path)
 
-    for epoch in range(int(cfg.training.epochs)):
+    def _persist_resume_state(epoch_done: int) -> None:
+        """Write the full optimizer/scheduler/EMA/snapshot state atomically."""
+        state = {
+            "epoch": int(epoch_done),
+            "best_val_accuracy": float(best_val_accuracy),
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "ema_state_dict": ema_model.state_dict() if ema_model is not None else None,
+            "snapshots": [(float(a), str(p)) for a, p in snapshots],
+        }
+        # NB: don't use .with_suffix here — resume_path already ends in
+        # ".resume.pt", and with_suffix would strip ".pt" and produce a double
+        # ".resume.resume.pt.tmp" name. Just append ".tmp".
+        tmp = resume_path.with_name(resume_path.name + ".tmp")
+        _save_durable(state, tmp)         # data committed to NFS before rename
+        tmp.replace(resume_path)          # atomic rename over the old resume file
+        _fsync_dir(resume_path.parent)    # make the rename itself durable
+
+    for epoch in range(start_epoch, int(cfg.training.epochs)):
         train_loss, train_acc = train_one_epoch(
             model, train_loader, loss_fn, optimizer, device,
             mixup_alpha=mixup_alpha, cutmix_prob=cutmix_prob,
@@ -423,17 +499,30 @@ def main(cfg: DictConfig) -> None:
                     target.unlink()
                 path.rename(target)
                 new_snapshots.append((acc, target))
+            _fsync_dir(checkpoint_path.parent)  # persist the _topN.pt renames
             snapshots = sorted(new_snapshots, key=lambda t: t[0])  # ascending
             best_val_accuracy = max(best_val_accuracy, candidate_acc)
             print(f"  Snapshots updated. Best so far: {best_val_accuracy:.4f}")
+
+        # End-of-epoch: persist resume state so a reboot mid-training can
+        # pick up at the next epoch boundary with optimizer/scheduler/EMA intact.
+        _persist_resume_state(epoch + 1)
 
     # Mirror the top-1 snapshot to the user-facing checkpoint_path for backwards compat.
     if snapshots:
         top1_path = _snapshot_path(1)
         if top1_path.exists():
             payload = torch.load(top1_path, map_location="cpu")
-            torch.save(payload, checkpoint_path)
+            _save_durable(payload, checkpoint_path)
+            _fsync_dir(checkpoint_path.parent)
             print(f"Wrote top-1 snapshot to {checkpoint_path}")
+
+    # Clean completion: delete the resume file so the next call to train.py
+    # with the same checkpoint_path starts fresh (not from this run's final
+    # epoch). Skip removal if training was interrupted (start_epoch >= epochs).
+    if resume_path.exists():
+        resume_path.unlink()
+        print(f"[resume] Cleaned up {resume_path.name}")
 
     print(f"Done. Best validation accuracy: {best_val_accuracy:.4f}")
     if len(snapshots) > 1:

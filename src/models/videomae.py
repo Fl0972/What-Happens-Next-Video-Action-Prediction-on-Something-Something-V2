@@ -82,7 +82,7 @@ class VideoMAE(nn.Module):
     """ViT-B/16 video classifier built on top of HF's VideoMAE."""
 
     DEFAULT_CHECKPOINT = "MCG-NJU/videomae-base-finetuned-ssv2"
-    EXPECTED_NUM_FRAMES = 16
+    PRETRAIN_NUM_FRAMES = 16  # the number the checkpoint was finetuned with
 
     def __init__(
         self,
@@ -97,10 +97,21 @@ class VideoMAE(nn.Module):
         # Lazy import so other models don't pay for transformers being absent.
         from transformers import VideoMAEConfig, VideoMAEForVideoClassification
 
-        if num_frames != self.EXPECTED_NUM_FRAMES:
+        # VideoMAE's tubelet embedding has temporal stride 2, so num_frames
+        # must be even. Position embeddings are sinusoidal and recomputed
+        # from `num_frames` at construction, so any even value works — but
+        # values far from the pretraining setting (16) are out-of-distribution
+        # for the attention patterns the model learned.
+        if num_frames % 2 != 0:
             raise ValueError(
-                f"VideoMAE expects num_frames={self.EXPECTED_NUM_FRAMES} (the tubelet "
-                f"positional embedding is fixed at construction); got {num_frames}."
+                f"VideoMAE num_frames must be even (tubelet stride is 2); got {num_frames}."
+            )
+        if num_frames != self.PRETRAIN_NUM_FRAMES:
+            print(
+                f"[VideoMAE] num_frames={num_frames} != pretraining default "
+                f"({self.PRETRAIN_NUM_FRAMES}). Position embeddings will be "
+                f"recomputed sinusoidally; this is OOD for the pretrained "
+                f"attention patterns — verify on val_dir."
             )
 
         if not pretrained:
@@ -108,8 +119,15 @@ class VideoMAE(nn.Module):
             self.backbone = VideoMAEForVideoClassification(cfg)
         else:
             # Load the full pretrained model *with its original 174-class head*
-            # so we can reuse the relevant rows below.
-            net = VideoMAEForVideoClassification.from_pretrained(checkpoint)
+            # so we can reuse the relevant rows below. Override num_frames so
+            # the position-embedding buffer is sized for our actual input;
+            # ignore_mismatched_sizes lets the size-changed buffer (and the
+            # 174→num_classes head) be reinitialised rather than blocking load.
+            net = VideoMAEForVideoClassification.from_pretrained(
+                checkpoint,
+                num_frames=num_frames,
+                ignore_mismatched_sizes=True,
+            )
             hidden = int(net.config.hidden_size)
             old_w = net.classifier.weight.data.clone()   # (num_old, hidden)
             old_b = net.classifier.bias.data.clone()     # (num_old,)

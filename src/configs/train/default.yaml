@@ -15,8 +15,18 @@ training:
   amp: true                # Mixed-precision (autocast) on CUDA — also used at inference
   amp_dtype: bfloat16      # 'bfloat16' (Ada/Ampere) or 'float16'
   eval_view_chunk: 4       # Inference: views processed per forward pass (caps GPU mem)
+  class_weight_temperature: 0.10   # ensemble_per_class.py: T in softmax(acc/T) over models
+  softmax_cache_dir: null          # default = <models_dir>/_softmax_cache
+  # ensemble_gradient.py: learned (gradient-descent) weighted soft-vote
+  grad_weight_mode: global   # 'global' (M weights, safe) or 'per_class' (M×C, expressive)
+  grad_steps: 300            # Adam steps to fit ensemble weights
+  grad_lr: 0.05              # Adam LR for ensemble-weight fitting
+  grad_l2_uniform: 0.001     # L2 pull of weights toward uniform (regularizer)
+  grad_holdout_frac: 0.0     # >0 → fit on a val subset, report honest held-out acc, then refit on all
   ema_decay: 0.999         # EMA of weights; set to 0.0 to disable
   top_k_checkpoints: 3     # Save top-K checkpoints by val acc (snapshot ensemble)
   ensemble_top_k: 3        # At inference, ensemble this many top-K snapshots
-  # Optional: an explicit list of checkpoints to ensemble (overrides ensemble_top_k)
-  # checkpoint_paths: [${hydra:runtime.cwd}/../models/foo.pt, ${hydra:runtime.cwd}/../models/bar.pt]
+  # Explicit list of checkpoints to ensemble (overrides ensemble_top_k when set).
+  # Example: training.checkpoint_paths=[/abs/a.pt,/abs/b.pt]
+  checkpoint_paths: null
+  skip_submission: false   # ensemble_per_class.py: skip CSV write (val-only run)

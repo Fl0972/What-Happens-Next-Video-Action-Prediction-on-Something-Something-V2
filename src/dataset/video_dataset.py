@@ -143,16 +143,25 @@ class VideoFrameDataset(Dataset):
         frame_paths = _list_frame_paths(video_dir)
         n_avail = len(frame_paths)
 
+        # Guard: when the video has fewer source frames than we sample, the
+        # different "temporal clips" of multi-clip TTA collapse to the same
+        # rounded indices — wasted compute. Silently downgrade to 1 clip in
+        # that case so the eval/submission path doesn't burn 3× the inference
+        # time for no signal.
+        effective_n_clips = self.n_clips if n_avail >= self.num_frames else 1
+
         views: List[torch.Tensor] = []
         # Label may get remapped by the transform (label-aware hflip on
         # direction-encoded SSv2 classes). Only the n_clips=1, training-mode
         # path actually mutates it; TTA / multi-clip eval keeps it as-is.
         out_label = int(label)
-        for clip_idx in range(self.n_clips):
+        for clip_idx in range(effective_n_clips):
             if self.temporal_jitter:
                 indices = _pick_frame_indices_tsn(n_avail, self.num_frames)
-            elif self.n_clips > 1:
-                indices = _pick_frame_indices_multi(n_avail, self.num_frames, clip_idx, self.n_clips)
+            elif effective_n_clips > 1:
+                indices = _pick_frame_indices_multi(
+                    n_avail, self.num_frames, clip_idx, effective_n_clips,
+                )
             else:
                 indices = _pick_frame_indices(n_avail, self.num_frames)
 
@@ -171,7 +180,7 @@ class VideoFrameDataset(Dataset):
                     view = result
                 views.append(view)                               # (T, C, H, W)
 
-        if self.n_clips == 1:
+        if effective_n_clips == 1:
             return views[0], torch.tensor(out_label, dtype=torch.long)
 
         # Multi-clip: stack along view dim, then flatten any spatial-TTA dim

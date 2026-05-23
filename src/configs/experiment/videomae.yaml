@@ -23,4 +23,4 @@ training:
   checkpoint_path: ${hydra:runtime.cwd}/../models/videomae_3_top3_top1.pt
 
 dataset:
-  num_frames: 16      # required by the VideoMAE-B SSv2 checkpoint
+  num_frames: 4      # match the raw 4 frames/video; VideoMAE rebuilds sinusoidal pos-embed at this length

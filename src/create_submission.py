@@ -332,10 +332,13 @@ def main(cfg: DictConfig) -> None:
         flush=True,
     )
 
-    # Build the model once, then reload state_dict per checkpoint to ensemble.
-    model = build_model_from_checkpoint(first_ckpt)
-    model.to(device)
-    print(f"Model on device: {device}", flush=True)
+    # The model is (re)built per checkpoint from that checkpoint's own stored
+    # config inside the loop. We must NOT switch on model_name: VideoMAE Base
+    # and Large both save model_name="videomae", so a model_name-keyed switch
+    # would load Large weights into a Base graph (or vice versa) and crash with
+    # a size mismatch when ensembling across backbones.
+    model = None
+    print(f"Device: {device}", flush=True)
 
     use_amp = bool(cfg.training.get("amp", True)) and device.type == "cuda"
     amp_dtype_str = str(cfg.training.get("amp_dtype", "bfloat16")).lower()
@@ -360,6 +363,7 @@ def main(cfg: DictConfig) -> None:
     for i, ckpt_path in enumerate(checkpoint_paths, start=1):
         print(f"[{i}/{len(checkpoint_paths)}] Loading {ckpt_path.name}", flush=True)
         ckpt = first_ckpt if i == 1 else torch.load(ckpt_path, map_location="cpu")
+        model = build_model_from_checkpoint(ckpt).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         probs = run_inference_logits(
             model, loader, device, total_videos=len(dataset),
