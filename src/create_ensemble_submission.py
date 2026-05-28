@@ -8,18 +8,20 @@ logits to the final prediction.
 
 Usage (from src/):
 
-    # Equal weights (default — recommended when unsure)
+    # Equal weights with log-softmax aggregation (recommended)
     python create_ensemble_submission.py \
-        "+checkpoints=[../models/tsm_ultra.pt,../models/video_former_lite_closed.pt]" \
-        dataset.submission_output=../submissions/ensemble.csv
+        "+checkpoints=[../models/tsm_ultra_v2.pt,../models/tsm_ultra_v2_rotating.pt]" \
+        dataset.submission_output=../submissions/ensemble.csv \
+        dataset.tta=true +log_softmax=true
 
-    # With TTA (10-crop averaging per model)
+    # Per-model TTA (some with, some without)
     python create_ensemble_submission.py \
-        "+checkpoints=[../models/tsm_ultra.pt,../models/video_former_lite_closed.pt]" \
-        dataset.submission_output=../submissions/ensemble_tta.csv \
-        dataset.tta=true
+        "+checkpoints=[../models/tsm_ultra_v2.pt,../models/vit_bigru_rotating.pt]" \
+        "+per_model_tta=[true,false]" \
+        dataset.submission_output=../submissions/ensemble.csv \
+        +log_softmax=true
 
-    # Custom weights (proportional — they are L1-normalised internally)
+    # Custom weights
     python create_ensemble_submission.py \
         "+checkpoints=[../models/tsm_ultra.pt,../models/video_former_lite_closed.pt]" \
         "+weights=[0.6,0.4]" \
@@ -34,6 +36,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 
 from create_submission import (
@@ -92,6 +95,19 @@ def main(cfg: DictConfig) -> None:
             f"Got {len(checkpoint_paths)} checkpoints but {len(raw_weights)} weights."
         )
 
+    # Per-model TTA overrides dataset.tta when provided
+    per_model_tta_cfg = cfg.get("per_model_tta", None)
+    per_model_tta: Optional[List[bool]] = None
+    if per_model_tta_cfg is not None:
+        per_model_tta = [bool(v) for v in per_model_tta_cfg]
+        if len(per_model_tta) != len(checkpoint_paths):
+            raise SystemExit(
+                f"per_model_tta has {len(per_model_tta)} entries but "
+                f"{len(checkpoint_paths)} checkpoints."
+            )
+
+    use_log_softmax: bool = bool(cfg.get("log_softmax", False))
+
     set_seed(int(cfg.dataset.seed))
     device_str = cfg.training.device
     if device_str == "cuda" and not torch.cuda.is_available():
@@ -99,7 +115,7 @@ def main(cfg: DictConfig) -> None:
         device_str = "cpu"
     device = torch.device(device_str)
 
-    use_tta = bool(cfg.dataset.get("tta", False))
+    global_tta = bool(cfg.dataset.get("tta", False))
     output_path = Path(cfg.dataset.submission_output).resolve()
     test_root = Path(cfg.dataset.test_dir).resolve()
 
@@ -128,23 +144,36 @@ def main(cfg: DictConfig) -> None:
     sample_list: List[Tuple[Path, int]] = [(p, 0) for p in valid_dirs]
 
     # ------------------------------------------------ per-checkpoint inference
-    ensemble_logits: Optional[torch.Tensor] = None
+    ensemble_acc: Optional[torch.Tensor] = None  # accumulated log-probs or weighted logits
     weights: List[float] = raw_weights if raw_weights else [1.0] * len(checkpoint_paths)
     weight_sum = sum(weights)
     weights = [w / weight_sum for w in weights]   # normalise to sum=1
 
-    for ckpt_path_str, weight in zip(checkpoint_paths, weights):
-        ckpt_path = Path(ckpt_path_str).resolve()
-        print(f"\nLoading checkpoint ({weight:.3f} weight): {ckpt_path}", flush=True)
+    agg_mode = "log-softmax" if use_log_softmax else "weighted-logit"
+    print(f"Aggregation: {agg_mode}")
+    print(f"Global TTA: {global_tta}" + (" (overridden per model)" if per_model_tta else ""))
 
-        ckpt: Dict[str, Any] = torch.load(ckpt_path, map_location="cpu")
+    for idx, (ckpt_path_str, weight) in enumerate(zip(checkpoint_paths, weights)):
+        ckpt_path = Path(ckpt_path_str).resolve()
+        use_tta = per_model_tta[idx] if per_model_tta is not None else global_tta
+        print(f"\n[{idx+1}/{len(checkpoint_paths)}] {ckpt_path.name}"
+              f"  weight={weight:.3f}  tta={use_tta}", flush=True)
+
+        ckpt: Dict[str, Any] = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         model = build_model_from_checkpoint(ckpt)
         model.load_state_dict(ckpt["model_state_dict"])
         model.to(device)
 
         num_frames = int(ckpt.get("num_frames", cfg.dataset.num_frames))
         pretrained = bool(ckpt.get("pretrained", False))
+        ckpt_cfg = OmegaConf.create(ckpt["config"]) if "config" in ckpt else cfg
+        interp = bool(ckpt_cfg.dataset.get("interpolate_frames", False))
         transform = build_transforms(is_training=False, use_imagenet_norm=pretrained)
+
+        # Use smaller batch for TTA to avoid OOM
+        batch_size = int(cfg.training.batch_size)
+        if use_tta:
+            batch_size = min(batch_size, 2)
 
         dataset = VideoFrameDataset(
             root_dir=test_root,
@@ -152,31 +181,35 @@ def main(cfg: DictConfig) -> None:
             transform=transform,
             sample_list=sample_list,
             tta=use_tta,
+            interpolate_frames=interp,
         )
         loader = DataLoader(
             dataset,
-            batch_size=int(cfg.training.batch_size),
+            batch_size=batch_size,
             shuffle=False,
             num_workers=int(cfg.training.num_workers),
             pin_memory=(device.type == "cuda"),
         )
-        if use_tta:
-            print(f"  TTA enabled (10 crops). frames={num_frames}", flush=True)
+        print(f"  frames={num_frames}  pretrained={pretrained}  bs={batch_size}", flush=True)
 
-        label = ckpt_path.stem
-        logits = collect_logits(model, loader, device, tta=use_tta, label=label)
+        logits = collect_logits(model, loader, device, tta=use_tta, label=ckpt_path.stem)
         print(f"  Logits shape: {tuple(logits.shape)}", flush=True)
 
         del model
         torch.cuda.empty_cache()
 
-        if ensemble_logits is None:
-            ensemble_logits = weight * logits
+        if use_log_softmax:
+            contribution = weight * F.log_softmax(logits.float(), dim=1)
         else:
-            ensemble_logits += weight * logits
+            contribution = weight * logits.float()
 
-    assert ensemble_logits is not None
-    predictions = ensemble_logits.argmax(dim=1).tolist()
+        if ensemble_acc is None:
+            ensemble_acc = contribution
+        else:
+            ensemble_acc += contribution
+
+    assert ensemble_acc is not None
+    predictions = ensemble_acc.argmax(dim=1).tolist()
 
     # ------------------------------------------------ write CSV
     if len(predictions) != len(valid_names):
@@ -194,7 +227,8 @@ def main(cfg: DictConfig) -> None:
 
     print(f"\nWrote {len(predictions)} rows to {output_path}", flush=True)
     ckpt_names = " + ".join(Path(p).stem for p in checkpoint_paths)
-    print(f"Ensemble: {ckpt_names} {'(TTA)' if use_tta else ''}", flush=True)
+    tta_label = "(per-model TTA)" if per_model_tta else ("(TTA)" if global_tta else "")
+    print(f"Ensemble: {ckpt_names} {tta_label}  [{agg_mode}]", flush=True)
 
 
 if __name__ == "__main__":

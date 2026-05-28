@@ -24,3 +24,15 @@ training:
   cutmix_prob: 0.5             # P(CutMix instead of MixUp) per batch
   rand_augment_ops: 0          # 0 disables RandAugment-style ops
   rand_augment_magnitude: 0.5  # magnitude in [0, 1]
+
+  # Resuming interrupted runs
+  resume: false                # set true to resume from {checkpoint}_last.pt
+
+  # K-fold cross-validation (train_kfold.py only)
+  n_folds: 5
+  rotating_folds: false        # true = one model, val fold rotates each epoch
+  fold_idx: null               # train a single fold only (null = all folds)
+
+  # Weights & Biases logging (null = disabled)
+  wandb_project: null          # e.g. "challenge-modal"
+  wandb_run_name: null         # auto-generated if null

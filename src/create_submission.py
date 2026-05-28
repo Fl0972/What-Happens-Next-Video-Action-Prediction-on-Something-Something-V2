@@ -185,6 +185,10 @@ def main(cfg: DictConfig) -> None:
 
     num_frames = int(ckpt.get("num_frames", cfg.dataset.num_frames))
     pretrained = bool(ckpt.get("pretrained", cfg.model.pretrained))
+    ckpt_cfg = OmegaConf.create(ckpt["config"]) if "config" in ckpt else cfg
+    interp = bool(ckpt_cfg.dataset.get("interpolate_frames", False))
+    if interp:
+        print(f"Frame interpolation enabled: {num_frames} → {num_frames * 2} frames.", flush=True)
     eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained)
 
     test_root = Path(cfg.dataset.test_dir).resolve()
@@ -239,6 +243,7 @@ def main(cfg: DictConfig) -> None:
         transform=eval_transform,
         sample_list=sample_list,
         tta=use_tta,
+        interpolate_frames=interp,
     )
     batch_size = int(cfg.training.batch_size)
     loader = DataLoader(

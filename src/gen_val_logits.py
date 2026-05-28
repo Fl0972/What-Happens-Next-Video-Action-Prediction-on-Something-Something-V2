@@ -1,11 +1,11 @@
 """
-Evaluate a saved checkpoint on the full validation split.
-Reports top-1 and top-5 accuracy. Supports TTA (dataset.tta=true).
+Generate and save val-dir logits for a checkpoint.
 
-Example (from src/)::
+Usage (from src/):
+    python gen_val_logits.py training.checkpoint_path=../models/my_model.pt
+    python gen_val_logits.py training.checkpoint_path=../models/my_model.pt dataset.tta=true
 
-    python evaluate.py
-    python evaluate.py dataset.tta=true
+Saves logits to ../models/val_logits/<stem>.npy and labels to labels.npy (once).
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import hydra
+import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
@@ -23,9 +24,7 @@ from train import build_model
 from utils import build_transforms, set_seed
 
 
-def load_model_from_checkpoint(checkpoint: Dict[str, Any], device: torch.device) -> torch.nn.Module:
-    if "config" not in checkpoint or checkpoint["config"] is None:
-        raise ValueError("Checkpoint has no 'config' entry.")
+def load_model_from_checkpoint(checkpoint: Dict[str, Any], device: torch.device):
     cfg = OmegaConf.create(checkpoint["config"])
     model = build_model(cfg)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -36,24 +35,20 @@ def load_model_from_checkpoint(checkpoint: Dict[str, Any], device: torch.device)
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    print(OmegaConf.to_yaml(cfg))
-
     set_seed(int(cfg.dataset.seed))
 
     device_str = cfg.training.device
     if device_str == "cuda" and not torch.cuda.is_available():
-        print("CUDA not available; using CPU.")
         device_str = "cpu"
     device = torch.device(device_str)
 
     checkpoint_path = Path(cfg.training.checkpoint_path).resolve()
-    raw: Dict[str, Any] = torch.load(checkpoint_path, map_location=device)
+    raw: Dict[str, Any] = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model = load_model_from_checkpoint(raw, device)
 
     pretrained_used = bool(raw.get("pretrained", cfg.model.pretrained))
     eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained_used)
 
-    # Use ALL of val_dir — no train/val split here
     val_dir = Path(cfg.dataset.val_dir).resolve()
     val_samples = collect_video_samples(val_dir)
 
@@ -61,10 +56,6 @@ def main(cfg: DictConfig) -> None:
     ckpt_cfg = OmegaConf.create(raw["config"]) if "config" in raw else cfg
     interp = bool(ckpt_cfg.dataset.get("interpolate_frames", False))
     use_tta = bool(cfg.dataset.get("tta", False))
-    if use_tta:
-        print("TTA enabled: averaging over 10 crops.")
-    if interp:
-        print(f"Frame interpolation enabled: {num_frames} → {num_frames * 2} frames.")
 
     val_dataset = VideoFrameDataset(
         root_dir=val_dir,
@@ -82,32 +73,40 @@ def main(cfg: DictConfig) -> None:
         pin_memory=(device.type == "cuda"),
     )
 
-    correct_top1 = 0
-    correct_top5 = 0
-    total = 0
+    all_logits = []
+    all_labels = []
 
     with torch.no_grad():
         for video_batch, labels in val_loader:
-            labels = labels.to(device)
-
             if use_tta:
-                # video_batch: (B, 10, T, C, H, W) — average logits over 10 crops
                 B, N, T, C, H, W = video_batch.shape
                 logits = model(video_batch.to(device).view(B * N, T, C, H, W))
                 logits = logits.view(B, N, -1).mean(dim=1)
             else:
                 logits = model(video_batch.to(device))
 
-            correct_top1 += int((logits.argmax(1) == labels).sum().item())
+            all_logits.append(logits.cpu().float().numpy())
+            all_labels.append(labels.numpy())
 
-            _, top5 = logits.topk(5, dim=1)
-            correct_top5 += int(top5.eq(labels.view(-1, 1)).any(dim=1).sum().item())
+    logits_arr = np.concatenate(all_logits, axis=0)
+    labels_arr = np.concatenate(all_labels, axis=0)
 
-            total += labels.size(0)
+    out_dir = checkpoint_path.parent.parent / "models" / "val_logits"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Validation samples: {total}")
-    print(f"Top-1 accuracy: {correct_top1 / max(total, 1):.4f}")
-    print(f"Top-5 accuracy: {correct_top5 / max(total, 1):.4f}")
+    suffix = "_tta" if use_tta else ""
+    stem = checkpoint_path.stem
+    logits_path = out_dir / f"{stem}{suffix}.npy"
+    np.save(logits_path, logits_arr)
+
+    labels_path = out_dir / "labels.npy"
+    np.save(labels_path, labels_arr)
+
+    top1 = float((logits_arr.argmax(1) == labels_arr).mean())
+    top5 = float(np.any(np.argsort(logits_arr, axis=1)[:, -5:] == labels_arr[:, None], axis=1).mean())
+
+    print(f"Saved logits ({logits_arr.shape}) → {logits_path}")
+    print(f"Top-1: {top1:.4f}  Top-5: {top5:.4f}")
 
 
 if __name__ == "__main__":

@@ -268,6 +268,7 @@ def make_dataset(
     lmdb_path: Optional[Path] = None,
     temporal_jitter: bool = False,
     tta: bool = False,
+    interpolate_frames: bool = False,
 ) -> Dataset:
     """Return LMDBVideoDataset if lmdb_path exists, else VideoFrameDataset."""
     kwargs = dict(
@@ -276,6 +277,7 @@ def make_dataset(
         sample_list=sample_list,
         temporal_jitter=temporal_jitter,
         tta=tta,
+        interpolate_frames=interpolate_frames,
     )
     if lmdb_path is not None and Path(lmdb_path).exists():
         from dataset.lmdb_dataset import LMDBVideoDataset

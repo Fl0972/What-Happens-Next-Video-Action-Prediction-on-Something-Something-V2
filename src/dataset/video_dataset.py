@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -67,6 +68,25 @@ def collect_video_samples(root_dir: Path) -> List[Tuple[Path, int]]:
     return samples
 
 
+def _interp_frames(frames: List[Image.Image]) -> List[Image.Image]:
+    """Double frame count by inserting a linear blend between each adjacent pair.
+
+    4 frames → [f0, blend(f0,f1), f1, blend(f1,f2), f2, blend(f2,f3), f3, f3] = 8
+    Works for any even number of input frames; the last real frame is repeated
+    as padding so the output length is always 2*len(frames).
+    """
+    out: List[Image.Image] = []
+    for i in range(len(frames) - 1):
+        out.append(frames[i])
+        a = np.array(frames[i], dtype=np.float32)
+        b = np.array(frames[i + 1], dtype=np.float32)
+        blend = Image.fromarray(((a + b) * 0.5).clip(0, 255).astype(np.uint8))
+        out.append(blend)
+    out.append(frames[-1])
+    out.append(frames[-1])  # pad last slot so len == 2 * original
+    return out
+
+
 def _pick_frame_indices(num_available: int, num_frames: int) -> List[int]:
     """Uniform linspace sampling (deterministic — used for val/test)."""
     if num_available <= 0:
@@ -102,12 +122,14 @@ class VideoFrameDataset(Dataset):
         sample_list: Optional[List[Tuple[Path, int]]] = None,
         temporal_jitter: bool = False,
         tta: bool = False,
+        interpolate_frames: bool = False,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.num_frames = num_frames
         self.transform = transform
         self.temporal_jitter = temporal_jitter
         self.tta = tta
+        self.interpolate_frames = interpolate_frames
         self.samples = list(sample_list) if sample_list is not None else collect_video_samples(self.root_dir)
 
     def __len__(self) -> int:
@@ -124,6 +146,9 @@ class VideoFrameDataset(Dataset):
         for fi in indices:
             with Image.open(frame_paths[fi]) as img:
                 pil_frames.append(img.convert("RGB"))
+
+        if self.interpolate_frames:
+            pil_frames = _interp_frames(pil_frames)
 
         if self.tta:
             video_tensor = self.transform.tta(pil_frames)   # (10, T, C, H, W)
