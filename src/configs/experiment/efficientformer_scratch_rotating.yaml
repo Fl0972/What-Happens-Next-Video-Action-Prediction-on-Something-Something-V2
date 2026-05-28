@@ -1,0 +1,61 @@
+# @package _global_
+# EfficientFormer-L1 — pure transformer, from scratch, rotating folds (closed track).
+#
+# v2 — fixes NaN divergence observed at epoch 24 of the L3 run:
+#
+#   1. variant: L3 → L1  (12 M params vs 31 M)
+#      L3's final stage has 6 attention blocks from random init; the QK dot
+#      products grew large enough to NaN softmax. L1 has only 4 attention
+#      blocks and a smaller hidden dim — far less chance of overflow.
+#
+#   2. lr: 3e-4 → 1.5e-4
+#      The L3 run showed the model barely learning (val 7.7%) before diverging.
+#      Halving the LR gives the attention layers more time to settle.
+#
+#   3. drop_path_rate: 0.1
+#      Stochastic depth randomly drops entire blocks during training. This
+#      (a) acts as strong regularisation for from-scratch training and
+#      (b) stabilises gradient flow through the randomly-initialised attention
+#      stage by occasionally bypassing it entirely early in training.
+#
+# Run: cd src && python train_kfold.py experiment=efficientformer_scratch_rotating
+
+defaults:
+  - override /model: efficientformer
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  variant: "efficientformer_l1.snap_dist_in1k"
+  head_dropout: 0.3
+  drop_path_rate: 0.1
+
+training:
+  epochs: 125
+  batch_size: 16
+  lr: 0.00015
+  optimizer: adamw
+  weight_decay: 0.1
+  backbone_lr_scale: 1.0
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 25
+  sgdr_t_mult: 1
+  warmup_epochs: 10
+  reg_warmup_epochs: 10
+  label_smoothing: 0.2
+  mixup_alpha: 0.4
+  cutmix_prob: 0.5
+  clip_grad_norm: 1.0
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  num_workers: 8
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  checkpoint_path: ${hydra:runtime.cwd}/../models/efficientformer_scratch.pt

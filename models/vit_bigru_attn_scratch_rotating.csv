@@ -1,0 +1,1 @@
+epoch,val_fold,lr,train_loss,train_acc,val_loss,val_acc,rolling_avg,best_rolling_avg

@@ -1,0 +1,31 @@
+# @package _global_
+# ViT-B/16 with SpaceTimeBlocks + Perceiver head (G19 exp4a downstream model).
+model:
+  name: vit_spacetime
+  num_classes: 33
+  pretrained: false          # no ImageNet init; loaded from MAE or trained from scratch
+  num_frames: 4
+
+  # ViT-B/16 encoder
+  img_size: 224
+  patch_size: 16
+  embed_dim: 768
+  depth: 12
+  num_heads: 12
+  mlp_ratio: 4.0
+
+  # Last K blocks are SpaceTimeBlocks (add temporal attention to spatial ViT blocks)
+  spacetime_depth: 6
+
+  # Perceiver head
+  num_queries: 16
+  perceiver_heads: 8
+  perceiver_layers: 2
+
+  # Regularisation
+  dropout: 0.1
+  attn_dropout: 0.0
+  head_dropout: 0.3
+
+  # Set to path of encoder weights produced by train_mae.py to use MAE pretraining
+  mae_pretrained_path: null

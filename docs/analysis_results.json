@@ -1,0 +1,318 @@
+{
+  "tta": false,
+  "n_val": 6745,
+  "n_classes": 33,
+  "per_model": {
+    "tsm_ultra_v2": {
+      "top1": 0.3825055596738325,
+      "top5": 0.6870274277242402
+    },
+    "tsm_ultra": {
+      "top1": 0.3491475166790215,
+      "top5": 0.6687916975537435
+    },
+    "video_former_lite_ultra": {
+      "top1": 0.3211267605633803,
+      "top5": 0.6484803558191253
+    }
+  },
+  "ensemble": {
+    "top1": 0.40429948109710895,
+    "top5": 0.7126760563380282
+  },
+  "ablation": {
+    "-tsm_ultra_v2": 0.3725722757598221,
+    "-tsm_ultra": 0.3955522609340252,
+    "-video_former_lite_ultra": 0.3982209043736101
+  },
+  "macro": {
+    "precision": 0.36009687987078964,
+    "recall": 0.36847433246042854,
+    "f1": 0.3582653506378061
+  },
+  "per_class": {
+    "000_Closing_something": {
+      "precision": 0.43312101910828027,
+      "recall": 0.2982456140350877,
+      "f1": 0.35324675324675325,
+      "support": 228,
+      "tp": 68
+    },
+    "001_Covering_something_with_something": {
+      "precision": 0.5128805620608899,
+      "recall": 0.5251798561151079,
+      "f1": 0.518957345971564,
+      "support": 417,
+      "tp": 219
+    },
+    "002_Dropping_something_into_something": {
+      "precision": 0.3076923076923077,
+      "recall": 0.3595505617977528,
+      "f1": 0.3316062176165803,
+      "support": 178,
+      "tp": 64
+    },
+    "003_Folding_something": {
+      "precision": 0.5593869731800766,
+      "recall": 0.512280701754386,
+      "f1": 0.5347985347985347,
+      "support": 285,
+      "tp": 146
+    },
+    "004_Hitting_something_with_something": {
+      "precision": 0.22429906542056074,
+      "recall": 0.20425531914893616,
+      "f1": 0.21380846325167036,
+      "support": 235,
+      "tp": 48
+    },
+    "005_Holding_something": {
+      "precision": 0.2708333333333333,
+      "recall": 0.4619289340101523,
+      "f1": 0.3414634146341463,
+      "support": 197,
+      "tp": 91
+    },
+    "006_Moving_something_away_from_something": {
+      "precision": 0.5202312138728323,
+      "recall": 0.4918032786885246,
+      "f1": 0.5056179775280898,
+      "support": 183,
+      "tp": 90
+    },
+    "007_Moving_something_closer_to_something": {
+      "precision": 0.5817307692307693,
+      "recall": 0.568075117370892,
+      "f1": 0.5748218527315915,
+      "support": 213,
+      "tp": 121
+    },
+    "008_Moving_something_down": {
+      "precision": 0.5436241610738255,
+      "recall": 0.5209003215434084,
+      "f1": 0.5320197044334976,
+      "support": 311,
+      "tp": 162
+    },
+    "009_Moving_something_up": {
+      "precision": 0.48580441640378547,
+      "recall": 0.42896935933147634,
+      "f1": 0.4556213017751479,
+      "support": 359,
+      "tp": 154
+    },
+    "010_Opening_something": {
+      "precision": 0.3881856540084388,
+      "recall": 0.27710843373493976,
+      "f1": 0.32337434094903333,
+      "support": 332,
+      "tp": 92
+    },
+    "011_Picking_something_up": {
+      "precision": 0.09302325581395349,
+      "recall": 0.06030150753768844,
+      "f1": 0.07317073170731707,
+      "support": 199,
+      "tp": 12
+    },
+    "012_Pouring_something_into_something": {
+      "precision": 0.5781818181818181,
+      "recall": 0.5719424460431655,
+      "f1": 0.5750452079566004,
+      "support": 278,
+      "tp": 159
+    },
+    "013_Pouring_something_out_of_something": {
+      "precision": 0.41333333333333333,
+      "recall": 0.3924050632911392,
+      "f1": 0.40259740259740256,
+      "support": 79,
+      "tp": 31
+    },
+    "014_Pretending_to_pick_something_up": {
+      "precision": 0.26037735849056604,
+      "recall": 0.3026315789473684,
+      "f1": 0.2799188640973631,
+      "support": 228,
+      "tp": 69
+    },
+    "015_Pretending_to_pour_something_out_of_something_but_something_": {
+      "precision": 0.3116883116883117,
+      "recall": 0.42857142857142855,
+      "f1": 0.3609022556390978,
+      "support": 56,
+      "tp": 24
+    },
+    "016_Pretending_to_put_something_into_something": {
+      "precision": 0.14516129032258066,
+      "recall": 0.1323529411764706,
+      "f1": 0.13846153846153847,
+      "support": 68,
+      "tp": 9
+    },
+    "017_Pretending_to_throw_something": {
+      "precision": 0.125,
+      "recall": 0.3191489361702128,
+      "f1": 0.17964071856287425,
+      "support": 47,
+      "tp": 15
+    },
+    "018_Pulling_something_from_left_to_right": {
+      "precision": 0.6079545454545454,
+      "recall": 0.6331360946745562,
+      "f1": 0.6202898550724638,
+      "support": 169,
+      "tp": 107
+    },
+    "019_Pulling_something_from_right_to_left": {
+      "precision": 0.4066666666666667,
+      "recall": 0.488,
+      "f1": 0.4436363636363636,
+      "support": 125,
+      "tp": 61
+    },
+    "020_Putting_something_behind_something": {
+      "precision": 0.22105263157894736,
+      "recall": 0.33070866141732286,
+      "f1": 0.26498422712933756,
+      "support": 127,
+      "tp": 42
+    },
+    "021_Putting_something_in_front_of_something": {
+      "precision": 0.4304635761589404,
+      "recall": 0.48148148148148145,
+      "f1": 0.4545454545454546,
+      "support": 135,
+      "tp": 65
+    },
+    "022_Putting_something_into_something": {
+      "precision": 0.31336405529953915,
+      "recall": 0.2328767123287671,
+      "f1": 0.2671905697445972,
+      "support": 292,
+      "tp": 68
+    },
+    "023_Putting_something_next_to_something": {
+      "precision": 0.3141891891891892,
+      "recall": 0.458128078817734,
+      "f1": 0.3727454909819639,
+      "support": 203,
+      "tp": 93
+    },
+    "024_Putting_something_onto_something": {
+      "precision": 0.1853932584269663,
+      "recall": 0.23741007194244604,
+      "f1": 0.2082018927444795,
+      "support": 139,
+      "tp": 33
+    },
+    "025_Showing_something_to_the_camera": {
+      "precision": 0.41379310344827586,
+      "recall": 0.27586206896551724,
+      "f1": 0.3310344827586207,
+      "support": 261,
+      "tp": 72
+    },
+    "026_Spilling_something_next_to_something": {
+      "precision": 0.1,
+      "recall": 0.016666666666666666,
+      "f1": 0.028571428571428574,
+      "support": 60,
+      "tp": 1
+    },
+    "028_Taking_something_out_of_something": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0,
+      "tp": 0
+    },
+    "029_Throwing_something": {
+      "precision": 0.4046511627906977,
+      "recall": 0.36401673640167365,
+      "f1": 0.3832599118942731,
+      "support": 239,
+      "tp": 87
+    },
+    "030_Turning_something_upside_down": {
+      "precision": 0.33505154639175255,
+      "recall": 0.3532608695652174,
+      "f1": 0.34391534391534384,
+      "support": 184,
+      "tp": 65
+    },
+    "031_Uncovering_something": {
+      "precision": 0.5257009345794392,
+      "recall": 0.5754475703324808,
+      "f1": 0.5494505494505495,
+      "support": 391,
+      "tp": 225
+    },
+    "032_Unfolding_something": {
+      "precision": 0.463768115942029,
+      "recall": 0.5128205128205128,
+      "f1": 0.487062404870624,
+      "support": 312,
+      "tp": 160
+    },
+    "class_32": {
+      "precision": 0.4065934065934066,
+      "recall": 0.34418604651162793,
+      "f1": 0.37279596977329976,
+      "support": 215,
+      "tp": 74
+    }
+  },
+  "confused_pairs": [
+    {
+      "true": "009_Moving_something_up",
+      "pred": "014_Pretending_to_pick_something_up",
+      "count": 40
+    },
+    {
+      "true": "025_Showing_something_to_the_camera",
+      "pred": "030_Turning_something_upside_down",
+      "count": 36
+    },
+    {
+      "true": "class_32",
+      "pred": "003_Folding_something",
+      "count": 34
+    },
+    {
+      "true": "011_Picking_something_up",
+      "pred": "014_Pretending_to_pick_something_up",
+      "count": 30
+    },
+    {
+      "true": "003_Folding_something",
+      "pred": "032_Unfolding_something",
+      "count": 29
+    },
+    {
+      "true": "025_Showing_something_to_the_camera",
+      "pred": "005_Holding_something",
+      "count": 29
+    },
+    {
+      "true": "010_Opening_something",
+      "pred": "005_Holding_something",
+      "count": 28
+    },
+    {
+      "true": "008_Moving_something_down",
+      "pred": "005_Holding_something",
+      "count": 28
+    },
+    {
+      "true": "003_Folding_something",
+      "pred": "class_32",
+      "count": 27
+    },
+    {
+      "true": "032_Unfolding_something",
+      "pred": "003_Folding_something",
+      "count": 24
+    }
+  ]
+}

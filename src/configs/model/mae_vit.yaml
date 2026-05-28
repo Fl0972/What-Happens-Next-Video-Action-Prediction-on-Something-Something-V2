@@ -1,0 +1,22 @@
+# @package _global_
+# MAE ViT-B/16 encoder + lightweight decoder for Stage-1 pretraining.
+# Used by train_mae.py only; not registered in build_model().
+model:
+  name: mae_vit
+  num_classes: 33     # unused by MAE; kept for Hydra schema consistency
+  pretrained: false
+
+  # ViT-B/16 encoder
+  patch_size: 16
+  embed_dim: 768
+  depth: 12
+  num_heads: 12
+  mlp_ratio: 4.0
+  mask_ratio: 0.75
+  dropout: 0.0
+  attn_dropout: 0.0
+
+  # Lightweight decoder
+  decoder_embed_dim: 512
+  decoder_depth: 4
+  decoder_num_heads: 16

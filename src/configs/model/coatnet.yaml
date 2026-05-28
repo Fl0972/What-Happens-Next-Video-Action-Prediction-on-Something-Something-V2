@@ -1,0 +1,13 @@
+# @package _global_
+# CoAtNet-RMLP-1 (timm) — hybrid MBConv+Transformer for video classification.
+#
+# pretrained=false for closed-track compliance (random init, no external weights).
+# variant: any timm CoAtNet model string (architecture only, weights ignored).
+# feat_dim is inferred automatically from backbone.num_features at construction.
+model:
+  name: coatnet
+  num_classes: ${num_classes}
+  pretrained: false
+  num_frames: ${dataset.num_frames}
+  variant: "coatnet_rmlp_1_rw2_224.sw_in12k_ft_in1k"
+  head_dropout: 0.3

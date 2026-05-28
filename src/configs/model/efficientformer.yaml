@@ -1,0 +1,14 @@
+# @package _global_
+# EfficientFormer-L3 (timm) — mobile-speed pure transformer for video classification.
+#
+# pretrained=false for closed-track compliance (random init, no external weights).
+# variant: any timm EfficientFormer model string (architecture only, weights ignored).
+# feat_dim is inferred automatically from backbone.num_features at construction.
+model:
+  name: efficientformer
+  num_classes: ${num_classes}
+  pretrained: false
+  num_frames: ${dataset.num_frames}
+  variant: "efficientformer_l3.snap_dist_in1k"
+  head_dropout: 0.3
+  drop_path_rate: 0.0

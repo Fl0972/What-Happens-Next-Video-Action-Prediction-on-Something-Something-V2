@@ -1,0 +1,66 @@
+# @package _global_
+# MaxViT-T + linear frame interpolation (4 real → 8 interpolated frames).
+#
+# Motivation:
+#   Every clip has exactly 4 JPEG frames from the first 40% of the video.
+#   Instead of duplicating frames blindly (which corrupts temporal-shift
+#   signals in TSM), we insert 1 linear blend between each adjacent pair:
+#
+#     [f0, blend(f0,f1), f1, blend(f1,f2), f2, blend(f2,f3), f3, f3]
+#
+#   This gives MaxViT 8 temporal positions of genuine (if blended) motion
+#   information without requiring extra frames on disk.
+#
+# Dataset flags:
+#   dataset.num_frames = 4          → 4 real frames sampled from disk
+#   dataset.interpolate_frames = true → dataset expands them to 8 before transform
+#   model.num_frames = 8            → model's actual temporal input dimension
+#
+# Training-from-scratch recipe (closed track — no ImageNet pretraining):
+#   * pretrained: false — all weights randomly initialised.
+#   * No backbone_lr_scale: backbone and head train at the same lr (1e-3).
+#     LLRD only makes sense when the backbone is pretrained; here it would
+#     starve the backbone of gradient early in training.
+#   * AdamW + weight_decay 0.05 — standard for transformer-family models.
+#   * 8-epoch linear warmup then cosine over 92 epochs (100 total).
+#   * reg_warmup_epochs 10: MixUp/CutMix off while the model learns basic
+#     per-frame features from scratch (same as tsm_ultra_v2).
+#   * label_smoothing 0.1 + focal_gamma 2.0 — same as tsm_ultra_v2.
+#   * horizontal_flip false — direction-sensitive classes.
+#   * weighted_sampling true — compensates 20× class imbalance.
+#   * clip_grad_norm 1.0 — stabilises transformer training.
+
+defaults:
+  - override /model: maxvit
+
+dataset:
+  num_frames: 4              # real frames read from disk
+  image_size: 224
+  interpolate_frames: true   # expand 4 → 8 via linear blending
+
+model:
+  pretrained: false
+  num_frames: 8
+  head_dropout: 0.3
+
+training:
+  epochs: 100
+  batch_size: 16
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.2
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  clip_grad_norm: 1.0
+  checkpoint_path: ${hydra:runtime.cwd}/../models/maxvit_interp.pt
+  rotating_folds: true

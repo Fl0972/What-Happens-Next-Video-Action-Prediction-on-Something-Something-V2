@@ -1,0 +1,12 @@
+# @package _global_
+# ViT-B/16 all patch tokens + Perceiver cross-attention head (G19-inspired).
+model:
+  name: vit_perceiver
+  num_classes: ${num_classes}
+  pretrained: false
+  num_frames: ${dataset.num_frames}
+  num_queries: 16
+  perceiver_heads: 8
+  perceiver_layers: 2
+  feat_dropout: 0.0
+  head_dropout: 0.3

@@ -3,7 +3,7 @@
 # fold_div=8: 1/8 channels see past frame, 1/8 see future frame, rest unchanged.
 model:
   name: tsm_resnet
-  pretrained: true
+  pretrained: false
   num_classes: ${num_classes}
   backbone: resnet18
   num_frames: ${dataset.num_frames}

@@ -53,8 +53,7 @@ The main composition file is `configs/config.yaml`. Global values such as `num_c
 
 An **experiment** selects which model and other settings (learning rate, optimizer, data augmentation) to use without editing Python. Defaults live in `configs/experiment/`:
 
-- `baseline_from_scratch` — ResNet18 backbone, average pooling over time (Track 1 - Closed World)
-- `baseline_pretrained` — pretrained ResNet18 backbone, average pooling over time (Track 2 - Open World)
+- `baseline_from_scratch` — ResNet18 backbone, average pooling over time (closed-track, trained from scratch)
 
 Run:
 

@@ -1,0 +1,47 @@
+# @package _global_
+# EfficientFormer-L3 — pure transformer trained from scratch (closed track).
+#
+# Architecture:
+#   EfficientFormer-L3 (timm: efficientformer_l3, ~31M params, random init).
+#   Per-frame 512-dim features, temporal mean-pool, linear classifier.
+#   pretrained=false: no external weights are loaded; architecture only.
+#
+# From-scratch recipe differences vs fine-tuning:
+#   - backbone_lr_scale=1.0 (uniform LR — no pretrained layers to protect)
+#   - Higher base LR (3e-4) with longer cosine schedule (100 epochs)
+#   - Stronger regularisation: higher weight_decay, label_smoothing, mixup/cutmix
+#   - Longer reg_warmup to let the network stabilise before augmentation hits
+
+defaults:
+  - override /model: efficientformer
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  variant: "efficientformer_l3.snap_dist_in1k"
+  head_dropout: 0.3
+
+training:
+  epochs: 100
+  batch_size: 16
+  lr: 0.0003
+  optimizer: adamw
+  weight_decay: 0.1
+  backbone_lr_scale: 1.0
+  scheduler: cosine
+  warmup_epochs: 10
+  reg_warmup_epochs: 10
+  label_smoothing: 0.2
+  mixup_alpha: 0.4
+  cutmix_prob: 0.5
+  clip_grad_norm: 1.0
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  num_workers: 8
+  checkpoint_path: ${hydra:runtime.cwd}/../models/efficientformer_scratch.pt

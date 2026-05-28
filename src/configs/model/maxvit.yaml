@@ -1,0 +1,23 @@
+# @package _global_
+# MaxViT-T (Multi-Axis Vision Transformer, Tiny) for video classification.
+#
+# Architecture:
+#   torchvision maxvit_t (ImageNet-pretrained, ~31M params) extracts a 512-dim
+#   representation per frame via hierarchical window+grid attention; frames are
+#   then mean-pooled and fed to a linear classifier.
+#   MaxViT combines local (window) and global (grid) self-attention at each
+#   stage — complementary inductive bias to both TSM (local CNN shifts) and
+#   plain ViT (global flat attention).
+#
+# num_frames here is the model's actual temporal input size. When
+# dataset.interpolate_frames=true, 4 real frames are expanded to 8 before
+# the model sees them, so model.num_frames must match the expanded count.
+#
+# pretrained defaults to false (closed track — no ImageNet weights allowed).
+
+model:
+  name: maxvit
+  num_classes: 33
+  pretrained: false
+  num_frames: 8        # temporal input size after interpolation
+  head_dropout: 0.3

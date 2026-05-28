@@ -1,0 +1,16 @@
+# @package _global_
+# TSMBiGRU: ResNet50 backbone with Temporal Shift Module + Bidirectional GRU head.
+# BiGRU reads the frame sequence in both temporal directions — directly targets
+# the fold↔unfold and real↔pretend confusion pairs that are SSv2's hardest cases.
+model:
+  name: tsm_gru
+  num_classes: ${num_classes}
+  pretrained: false
+  backbone: resnet50
+  num_frames: ${dataset.num_frames}
+  fold_div: 8
+  drop_path_rate: 0.2
+  gru_hidden: 256
+  gru_layers: 1
+  feat_dropout: 0.3
+  head_dropout: 0.5

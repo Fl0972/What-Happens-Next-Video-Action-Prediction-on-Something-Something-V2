@@ -1,0 +1,84 @@
+# @package _global_
+# Stage-2: ViT with SpaceTimeBlocks + Perceiver head, fine-tuned from MAE pretrained encoder.
+#
+# Architecture (G19 exp4a):
+#   - Per-frame PatchEmbed + fixed sincos spatial pos embedding + learnable temporal pos
+#   - First 6 ViT-B blocks: spatial attention only (loaded from MAE pretrained)
+#   - Last 6 SpaceTimeBlocks: factorized spatial + temporal attention
+#     (spatial weights from MAE; temporal attention zero-init for stable init)
+#   - 16 learned Perceiver queries cross-attend all T×197 tokens → mean → Linear → 33 classes
+#
+# Training recipe (G19 downstream):
+#   - AdamW with layer-wise LR decay (llrd_decay=0.75)
+#   - Linear warmup + cosine annealing
+#   - Gradient clipping
+#   - EMA (exponential moving average) for robust evaluation
+#   - SWA (stochastic weight averaging) in the last ~25% of epochs
+#   - Strong clip augmentation (RRC + jitter), NO horizontal flip
+#   - Weighted random sampling for class imbalance
+#
+# Run: cd src && python train.py experiment=vit_spacetime_mae
+#   (set model.mae_pretrained_path to the encoder file from Stage-1)
+
+defaults:
+  - override /model: vit_spacetime
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  spacetime_depth: 6
+  num_queries: 16
+  perceiver_heads: 8
+  perceiver_layers: 2
+  dropout: 0.1
+  attn_dropout: 0.0
+  head_dropout: 0.4
+  # Set this to the encoder file produced by train_mae.py:
+  # mae_pretrained_path: /path/to/mae_vit_encoder.pt
+  mae_pretrained_path: null
+
+training:
+  epochs: 60
+  batch_size: 8
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.05
+
+  # Layer-wise LR decay (llrd_decay > 0 activates param_groups_llrd on the model)
+  llrd_decay: 0.75
+
+  # Cosine schedule with linear warmup
+  scheduler: cosine
+  warmup_epochs: 5
+
+  # Regularisation
+  reg_warmup_epochs: 5
+  label_smoothing: 0.15
+  mixup_alpha: 0.2
+  cutmix_prob: 0.2
+  clip_grad_norm: 1.0
+
+  # EMA: maintain exponential moving average of weights for evaluation
+  ema: true
+  ema_decay: 0.9998
+
+  # SWA: average weights over last swa_epochs at swa_lr
+  swa: true
+  swa_epochs: 15
+  swa_lr: 0.00005
+
+  # Augmentation
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+
+  # Weighted sampling to handle 20× class imbalance
+  weighted_sampling: true
+  sampler_power: 0.5
+
+  num_workers: 8
+  device: cuda
+  checkpoint_path: ${hydra:runtime.cwd}/../models/vit_spacetime_mae.pt

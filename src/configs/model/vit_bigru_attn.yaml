@@ -1,0 +1,11 @@
+# @package _global_
+# ViT-B/16 per-frame [CLS] + BiGRU + learned temporal attention pooling.
+model:
+  name: vit_bigru_attn
+  num_classes: ${num_classes}
+  pretrained: false
+  num_frames: ${dataset.num_frames}
+  gru_hidden: 256
+  gru_layers: 1
+  feat_dropout: 0.0
+  head_dropout: 0.3

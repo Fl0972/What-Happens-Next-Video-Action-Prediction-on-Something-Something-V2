@@ -25,7 +25,7 @@ python train.py training.epochs=10 training.lr=0.001
 
 **Train:**
 ```bash
-cd src && python train.py experiment=tsm_pretrained
+cd src && python train.py experiment=tsm_ultra_v2
 ```
 
 **Evaluate on full val set:**
@@ -62,7 +62,7 @@ Class index is parsed from the leading digits in the class folder name (`000_...
 ### Config System (Hydra)
 `configs/config.yaml` is the root; it composes `model/`, `data/`, `train/`, and `experiment/` groups. An **experiment** YAML (`configs/experiment/`) is the recommended entry point — it overrides model and training settings without touching Python.
 
-Current experiments: `baseline_from_scratch`, `baseline_pretrained`, `tsm_from_scratch`, `tsm_pretrained`.
+Current experiments (all closed-track, trained from scratch): `baseline_from_scratch`, `tsm_from_scratch`, `tsm_ultra_v2`, `video_former_lite_ultra`.
 
 ### Models
 All models share the same interface: input `(B, T, C, H, W)`, output logits `(B, num_classes)`.

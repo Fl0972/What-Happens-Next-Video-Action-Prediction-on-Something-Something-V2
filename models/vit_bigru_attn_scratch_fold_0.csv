@@ -1,0 +1,1 @@
+epoch,lr,train_loss,train_acc,val_loss,val_acc,best_val_acc
