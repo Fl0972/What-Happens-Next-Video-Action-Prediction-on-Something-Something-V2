@@ -1,0 +1,78 @@
+# @package _global_
+# Track 1 (Closed World) — VideoFormer-Lite ULTRA recipe.
+#
+# Goal: push the from-scratch VFL beyond the 45.78% internal val ceiling of
+# video_former_lite_closed (60 epochs, 4 frames, 2 transformer layers).
+# The previous run was still improving at epoch 60 — capacity, frame budget,
+# and epoch count were all the bottleneck, not regularization.
+#
+# Changes vs video_former_lite_closed (and *why*):
+#   * epochs 60 -> 100
+#       VFL curve was still climbing at 60. With a ~20h training budget on
+#       an A4000 we can afford 100 epochs comfortably.
+#   * num_frames 4 -> 6
+#       SSv2 labels are motion-defined. More temporal samples per clip give
+#       both finer-grained temporal evidence and (via TSN-style segment
+#       jitter) more augmentation diversity. The temporal pos-embed is
+#       sized at construction so changing this requires a fresh run.
+#   * n_layers 2 -> 3
+#       2 layers over 4 tokens is barely a Transformer; with 6 frame tokens
+#       + [CLS] = 7, a third encoder block gives the attention more depth
+#       to compose global temporal relations. Cost is minimal (~+0.8 M params).
+#   * lr 5e-4 -> 8e-4, warmup_epochs 8 -> 10
+#       AdamW on a from-scratch Transformer scales well with a higher peak
+#       LR provided the warmup is long enough to stabilise the attention.
+#       A higher peak shortens the time-to-good-loss without sacrificing
+#       final accuracy on cosine schedules.
+#   * drop_path_rate 0.1 -> 0.15
+#       Slightly more stochastic depth to match the deeper Transformer and
+#       the longer training (more chances to overfit).
+#   * reg_warmup_epochs 10 (UNCHANGED)
+#       Non-negotiable. The single most impactful knob in the experiment
+#       series (cold-start needs to learn basic features before MixUp /
+#       CutMix start mixing labels).
+#   * batch_size 32, weight_decay 0.05, label_smoothing 0.1,
+#     mixup_alpha 0.2, cutmix_prob 0.25, RandAug (2, 0.5),
+#     horizontal_flip false, weighted_sampling true (sampler_power 0.5)
+#       All kept — these were the right calls for SSv2 and changing them
+#       would confound the experiment.
+#
+# Wall-clock estimate: ~4.5 min/epoch (vs ~3.5 min at 4 frames + 2 layers)
+# => ~7.5h for 100 epochs at batch 32 on a single A4000.
+
+defaults:
+  - override /model: trackA_video_former_lite
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  d_model: 512
+  n_heads: 8
+  n_layers: 2
+  mlp_ratio: 4.0
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.15
+  dropout: 0.2
+
+training:
+  epochs: 100
+  batch_size: 32
+  lr: 0.0005
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/video_former_lite_ultra.pt

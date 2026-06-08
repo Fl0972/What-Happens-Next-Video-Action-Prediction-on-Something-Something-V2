@@ -1,0 +1,84 @@
+# @package _global_
+# ABLATION F — VFL 2-layer with SGDR T_mult=2 (growing cycles).
+#
+# Question answered: Exp B showed VFL 2-layer (0.8105) > VFL 3-layer (0.7822)
+# by +2.83 pp internal rolling-avg. Can a T_mult=2 schedule push the 2-layer
+# model further by giving its self-attention more time to stabilise in cycle 4?
+#
+# LR trace with warmup_epochs=12, T0=12, T_mult=2, epochs=200:
+#   ep  0–11 : LinearLR warmup → 8e-4
+#   ep 12–23 : SGDR cycle 1  (12 ep), 8e-4 → ~0
+#   ep 24–47 : SGDR cycle 2  (24 ep), 8e-4 → ~0
+#   ep 48–95 : SGDR cycle 3  (48 ep), 8e-4 → ~0
+#   ep 96–191: SGDR cycle 4  (96 ep), 8e-4 → ~0   ← main convergence
+#   ep 192–199: partial cycle 5
+#
+# vs B reference (ablation_vfl_2layers_rotating, T_mult=1, T0=25, 150 ep):
+#   6 equal cycles of 25 ep, still clearly improving at ep 150.
+#
+# Single axis changed vs ablation_vfl_2layers_rotating:
+#   sgdr_t0     25  →  12
+#   sgdr_t_mult  1  →   2
+#   epochs     150  → 200   (extra 50 ep to exploit the 96-ep cycle 4 fully)
+#
+# Everything else identical to Exp B: T=4, n_layers=2, d_model=512, n_heads=8,
+# focal γ=2, drop_path=0.15, dropout=0.2, AdamW lr=8e-4, wd=0.05,
+# warmup=12 ep, reg_warmup=10 ep, rotating 5-fold, MixUp, CutMix, RandAug,
+# label_smoothing=0.1, weighted_sampling.
+#
+# Expected outcome:
+#   If T_mult=2 wins → the Transformer's self-attention parameters need long
+#     uninterrupted low-LR phases to converge; val-dir > Exp B's expected result.
+#   If T_mult=1 wins → frequent restarts help VFL escape local attention minima;
+#     the 96-ep cycle 4 leads to overfitting a single fold's distribution.
+#
+# Wall-clock: ~4.5 min/ep × 200 ep ≈ 15h on A4000 @ 150W.
+# Run (Machine 2):
+#   cd src && python train_kfold.py experiment=ablation_vfl2_sgdr_t2_rotating
+
+defaults:
+  - override /model: trackA_video_former_lite
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  d_model: 512
+  n_heads: 8
+  n_layers: 2            # from Exp B: 2-layer outperforms 3-layer
+  mlp_ratio: 4.0
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.15   # from Exp B: calibrated for 2-layer depth
+  dropout: 0.2
+
+training:
+  epochs: 200            # extended from B's 150 (B was still improving at ep 150)
+  batch_size: 32
+  lr: 0.0008
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 12            # changed: 25 → 12
+  sgdr_t_mult: 2         # changed: 1  → 2  (cycles: 12→24→48→96)
+  warmup_epochs: 12
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  wandb_run_name: "ablation-F-vfl2-sgdr-t2"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/ablation_vfl2_sgdr_t2.pt

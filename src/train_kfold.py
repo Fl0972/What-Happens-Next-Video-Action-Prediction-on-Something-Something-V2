@@ -19,13 +19,13 @@ Usage::
 
     cd src
     # Mode 1 — train all 5 folds:
-    python train_kfold.py experiment=tsm_resnet50_bigru
+    python train_kfold.py experiment=trackA_tsm_resnet50_bigru
 
     # Mode 1 — train a single fold (for parallel runs on separate GPUs):
-    python train_kfold.py experiment=tsm_resnet50_bigru training.fold_idx=2
+    python train_kfold.py experiment=trackA_tsm_resnet50_bigru training.fold_idx=2
 
     # Mode 2 — rotating folds, single model:
-    python train_kfold.py experiment=tsm_resnet50_bigru training.rotating_folds=true
+    python train_kfold.py experiment=trackA_tsm_resnet50_bigru training.rotating_folds=true
 
 Mode 1 checkpoints:  {stem}_fold_{i}.pt
 Mode 2 checkpoint:   {stem}_rotating.pt

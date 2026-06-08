@@ -1,0 +1,86 @@
+# @package _global_
+# ABLATION H — VFL 2-layer with single-cosine high-peak LR (one-cycle shape).
+#
+# Question answered: Exp B established VFL 2-layer as the better VFL variant
+# (+2.83 pp over 3-layer). Exp F tests T_mult=2 on it. This experiment tests
+# the orthogonal axis: does a single high-peak LR sweep outperform repeated
+# SGDR restarts for a 2-layer Transformer trained on rotating folds?
+#
+# LR trace with lr=2.4e-3, scheduler=cosine, warmup_epochs=20, epochs=200:
+#   ep  0–19 : LinearLR warmup: 2.4e-5 → 2.4e-3   (3× the B base LR of 8e-4)
+#   ep 20–199: CosineAnnealingLR: 2.4e-3 → ~0
+#
+#   2.4e-3 = 3× B's 8e-4. Same multiplier as Exp G (TSM) for comparability.
+#   The Transformer's attention parameters benefit from a high initial LR
+#   (broader weight-space search) followed by a long smooth decay
+#   (key-query-value matrices need stable fine-tuning).
+#
+# vs B reference (ablation_vfl_2layers_rotating, SGDR T0=25, T_mult=1, 150 ep):
+#   6 SGDR cycles; rolling-avg dip at every restart; B still improving at ep 150.
+#
+# Single axis changed vs ablation_vfl_2layers_rotating:
+#   lr          8e-4  →  2.4e-3  (3× higher peak)
+#   scheduler   cosine_warm_restarts  →  cosine  (single sweep, no restarts)
+#   warmup_epochs 12  →  20      (stabilise the 3× higher LR peak)
+#   reg_warmup_epochs 10 → 20    (match LR warmup duration)
+#   epochs     150   →  200      (one-cycle needs the full cosine tail to converge)
+#
+# All architecture parameters identical to B: n_layers=2, d_model=512, n_heads=8,
+# drop_path=0.15, dropout=0.2, focal γ=2, AdamW wd=0.05, RandAug, MixUp,
+# CutMix, label_smoothing=0.1, weighted_sampling, rotating 5-fold.
+#
+# Expected outcome:
+#   If one-cycle wins → Transformer self-attention converges better with
+#     one long stable LR trajectory; restarts disrupt attention geometry.
+#   If SGDR wins → restarts help VFL escape early attention-collapse minima.
+#   Together with Exp F (T_mult=2) this fully characterises the LR shape
+#   dimension for the best VFL variant.
+#
+# Wall-clock: ~4.5 min/ep × 200 ep ≈ 15h on A4000 @ 150W.
+# Run (Machine 4):
+#   cd src && python train_kfold.py experiment=ablation_vfl2_onecycle_rotating
+
+defaults:
+  - override /model: trackA_video_former_lite
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  d_model: 512
+  n_heads: 8
+  n_layers: 2            # from Exp B: best VFL variant
+  mlp_ratio: 4.0
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.15   # from Exp B: calibrated for 2-layer depth
+  dropout: 0.2
+
+training:
+  epochs: 200            # extended from B's 150; single cosine needs full tail
+  batch_size: 32
+  lr: 0.0024             # changed: 8e-4 → 2.4e-3 (3× higher peak LR)
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine       # changed: cosine_warm_restarts → cosine (single sweep)
+  warmup_epochs: 20       # changed: 12 → 20 (stabilise the higher LR peak)
+  reg_warmup_epochs: 20   # changed: 10 → 20 (match LR warmup; high LR + MixUp = unstable)
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  wandb_run_name: "ablation-H-vfl2-onecycle"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/ablation_vfl2_onecycle.pt

@@ -35,7 +35,7 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm.auto import tqdm
 
 from dataset.video_dataset import collect_video_samples
-from models.vit_spacetime import MAEViT
+from models.trackA_vit_spacetime import MAEViT
 from utils import build_transforms, make_dataset, set_seed, split_train_val
 
 

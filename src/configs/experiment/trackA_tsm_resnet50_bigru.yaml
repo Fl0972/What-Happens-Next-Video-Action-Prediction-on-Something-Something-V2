@@ -1,0 +1,71 @@
+# @package _global_
+# TSM-ResNet50 + BiGRU — addressing overfitting via layer-wise LR and strong regularization.
+#
+# Architecture rationale:
+#   * ResNet50 backbone (2048-dim features) with TSM — richer spatial representations
+#     than ResNet18, TSM provides free temporal mixing inside every block.
+#   * Bidirectional GRU head (256 hidden per direction = 512 total) — ordered temporal
+#     reasoning in both directions. Targets the fold↔unfold and real↔pretend confusions
+#     that pure mean-pooling cannot resolve.
+#
+# Anti-overfitting strategy (ResNet50 is 4× wider than ResNet18 → higher overfit risk):
+#   * backbone_lr_scale 0.1: backbone parameters train at lr × 0.1, GRU + head at full lr.
+#     Prevents the large backbone from fitting noise before the head stabilizes.
+#   * feat_dropout 0.3: applied to per-frame features entering the GRU.
+#   * head_dropout 0.5: applied before the final classifier.
+#   * drop_path 0.25: stochastic depth on residual branches (higher than R18 recipes).
+#   * weight_decay 1e-3: stronger than the standard 5e-4.
+#   * clip_grad_norm 1.0: gradient clipping — RNNs can explode on hard SSv2 batches.
+#   * label_smoothing 0.15: soft targets discourage over-confidence on near-miss classes.
+#   * reg_warmup_epochs 10: MixUp/CutMix disabled during cold-start (same fix that gave
+#     +36 pp on VideoFormerLite).
+#
+# Schedule:
+#   * 8-epoch linear warmup → SGDR with T_0=23, 4 equal cycles of 23 epochs (8+92=100).
+#   * Restarts at epochs 31, 54, 77 — model escapes sharp minima each cycle.
+#
+# Frame count:
+#   * num_frames=4 matches the actual clip length (key insight from tsm_ultra_v2).
+
+defaults:
+  - override /model: trackA_tsm_gru
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet50
+  fold_div: 8
+  drop_path_rate: 0.25
+  gru_hidden: 256
+  gru_layers: 1
+  feat_dropout: 0.3
+  head_dropout: 0.5
+
+training:
+  epochs: 100
+  batch_size: 16
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.001
+  backbone_lr_scale: 0.1
+  scheduler: cosine_warm_restarts
+  warmup_epochs: 8
+  sgdr_t0: 23
+  sgdr_t_mult: 1
+  reg_warmup_epochs: 10
+  label_smoothing: 0.15
+  mixup_alpha: 0.2
+  cutmix_prob: 0.2
+  clip_grad_norm: 1.0
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_resnet50_bigru.pt
+  wandb_project: "challenge-modal"

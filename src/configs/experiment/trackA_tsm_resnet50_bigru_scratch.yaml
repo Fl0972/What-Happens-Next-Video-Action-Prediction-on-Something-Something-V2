@@ -1,0 +1,52 @@
+# @package _global_
+# TSM-ResNet50 + BiGRU — trained fully from scratch, uniform LR across backbone and head.
+#
+# Key difference from tsm_resnet50_bigru:
+#   backbone_lr_scale removed — backbone trains at full lr (1e-3).
+#   backbone_lr_scale=0.1 is a fine-tuning trick that starves a randomly-initialized
+#   backbone of gradient signal, causing the ~5% stuck-at-random failure seen in that run.
+#
+# Regularization kept strong because ResNet50 (25M params) still overfits easily on this
+# small dataset — just without the optimization bottleneck.
+
+defaults:
+  - override /model: trackA_tsm_gru
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet50
+  fold_div: 8
+  drop_path_rate: 0.25
+  gru_hidden: 256
+  gru_layers: 1
+  feat_dropout: 0.3
+  head_dropout: 0.5
+
+training:
+  epochs: 100
+  batch_size: 16
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.001
+  scheduler: cosine_warm_restarts
+  warmup_epochs: 8
+  sgdr_t0: 23
+  sgdr_t_mult: 1
+  reg_warmup_epochs: 10
+  label_smoothing: 0.15
+  mixup_alpha: 0.2
+  cutmix_prob: 0.2
+  clip_grad_norm: 1.0
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_resnet50_bigru_scratch.pt
+  wandb_project: "challenge-modal"

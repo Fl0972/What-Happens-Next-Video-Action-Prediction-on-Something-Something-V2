@@ -1,0 +1,66 @@
+# @package _global_
+# Track 1 (Closed World) — VideoFormer-Lite trained from scratch.
+#
+# Dataset note: this is Something-Something V2 (33-class subset). The label is
+# defined by *motion* over the 4 sampled frames ("Pulling X from left to right",
+# "Pouring X into Y"), so spatial mixing augmentations are double-edged:
+# they can erase the very hand/object motion that IS the label.
+#
+# Inductive bias: 2D CNN per frame (handles spatial structure cheaply) +
+# 2-layer temporal Transformer over 4 frame tokens (lets the model reason
+# about motion / order without forcing a 3D conv).
+#
+# Recipe (cf. MODEL.md for cross-references to the lecture slides):
+#   * AdamW, lr 5e-4 with 8-epoch linear warmup + cosine annealing, weight decay 5e-2.
+#   * Regularization warmup: MixUp / CutMix DISABLED for the first 10 epochs so
+#     the cold-start ResNet18 + Transformer can learn basic per-frame features
+#     before strong label-mixing perturbs the signal. Enabled at full strength
+#     from epoch 11 onward.
+#   * Label smoothing 0.1, MixUp alpha 0.2, CutMix p 0.25 (lower than usual on
+#     image tasks: CutMix removes a patch across all 4 frames, which on SSv2
+#     can delete the motion that defines the class). One of MixUp/CutMix is
+#     chosen randomly per batch when active.
+#   * RandAugment 2 ops @ magnitude 0.5, Random Erasing 0.25.
+#   * DropPath linearly scaled to 0.1 across the 2 Transformer blocks; dropout
+#     0.2 before the classifier.
+#   * Horizontal flip DISABLED — several classes are direction-sensitive
+#     (e.g. "Pulling left/right", "Pouring into/out of") so hflip would silently
+#     corrupt labels.
+#   * WeightedRandomSampler with weights proportional to 1/sqrt(class_count) to
+#     mitigate the 20x class imbalance (162 -> 3170 clips per class).
+defaults:
+  - override /model: trackA_video_former_lite
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  d_model: 512
+  n_heads: 8
+  n_layers: 2
+  mlp_ratio: 4.0
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.1
+  dropout: 0.2
+
+training:
+  epochs: 60
+  batch_size: 32
+  lr: 0.0005
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/video_former_lite_closed.pt

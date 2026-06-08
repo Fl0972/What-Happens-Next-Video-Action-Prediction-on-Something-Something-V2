@@ -55,19 +55,16 @@ We present a two-track study of temporal action prediction on a 33-class subset
 of Something-Something\,V2 (SSv2)~\cite{goyal2017ssv2}, ``What Happens Next?'':
 only the first ${\approx}40\%$ of each clip (four JPEG frames) is given, so the
 outcome is withheld and classification must reason about motion. In
-\textbf{Track~A (Closed World)}, where pretraining is forbidden, two data-centric
-fixes dominate architecture choice: a 10-epoch \emph{regularisation warm-up}
-($+36.3$\,pp) and matching the model's frame count to the true clip length
-($+4.4$\,pp). Once these are fixed, a controlled ablation study shows that
+\textbf{Track~A (Closed World)}, where pretraining is forbidden, our study shows that
 \emph{where} a model mixes time matters more than \emph{how much} capacity it
 has: Temporal-Shift-Module~\cite{lin2019tsm} (TSM), which mixes frames
 \emph{before} spatial pooling, beats VideoFormer-Lite (VFL, global
 post-pooling attention) by $+3.0$\,pp at matched backbone size, and scaling
-its backbone from ResNet18 to ResNet50 then adds a further $+3.4$\,pp
-(\textbf{42.85\%} \texttt{val\_dir}, our best single model). A five-model
+its backbone from ResNet18 to ResNet50 then adds a further $+3.4$\,pp to reach
+\textbf{42.85\%} \texttt{val\_dir} (our best single model). A five-model
 log-softmax ensemble of TSM and VFL variants with test-time augmentation
-reaches \textbf{46.75\%} \texttt{val\_dir} and \textbf{0.5072} public /
-\textbf{0.4764} private on Kaggle --- our best closed-track submission. In
+reaches \textbf{46.75\%} \texttt{val\_dir} and \textbf{0.4785} public /
+\textbf{0.4547} private on Kaggle --- our best closed-track submission. In
 \textbf{Track~B (Open World)}, we fine-tune V-JEPA\,2~\cite{bardes2025vjepa2}
 and VideoMAE~\cite{tong2022videomae} backbones with progressive unfreezing,
 layer-wise learning-rate decay, window-capped source-frame re-extraction and
@@ -135,23 +132,19 @@ matters as much as how it is mixed.
 
 \subsubsection{Architecture family and complexity}
 \label{sec:arch}
-All three Track~A architectures share the input/output contract
-$(B, T, C, H, W) \to (B, 33)$ with $T{=}4$, $H{=}W{=}224$, and build on a
-ResNet backbone~\cite{he2016resnet} that maps each $224{\times}224{\times}3$
-frame to a $512$-d (ResNet18) or $2048$-d (ResNet50) feature after global
-average pooling. They differ only in \emph{how} the $T$ per-frame feature
-vectors are turned into a single $33$-way prediction --- the choice that
-defines each model's parameter budget and its temporal inductive bias.
+All three Track~A architectures share the contract $(B, T, C, H, W) \to
+(B, 33)$ with $T{=}4$, $H{=}W{=}224$, and a ResNet
+backbone~\cite{he2016resnet} mapping each frame to a $512$-d (R18) or
+$2048$-d (R50) vector after global average pooling. \textbf{CNNBaseline} and
+\textbf{CNN-LSTM} simply average (resp.\ recurrently combine) the $T$ pooled
+features --- weak baselines ($\approx\!11.2$\,M params) since BPTT on
+four-step sequences barely helps. The two strong families differ in
+\emph{where} they mix time relative to spatial pooling.
 
-\noindent\textbf{CNNBaseline} and \textbf{CNN-LSTM} simply average (resp.\
-recurrently combine) the $T$ pooled features; with four frames the LSTM gives
-only marginal gains because backpropagation through time on such short
-sequences is unstable. Both serve as lower bounds ($\approx\!11.2$\,M
-parameters, ResNet18 backbone).
-
-\noindent\textbf{TSM-ResNet}~\cite{lin2019tsm} wraps every residual block: a
-fraction $1/\text{fold\_div}$ of channels is shifted one step backward and
-another $1/\text{fold\_div}$ one step forward along the time axis,
+\noindent\textbf{TSM-ResNet}~\cite{lin2019tsm} re-indexes, \emph{inside every
+residual block and before every convolution}, a fraction
+$1/\text{fold\_div}$ of channels one step backward and another
+$1/\text{fold\_div}$ one step forward in time:
 \begin{equation}
   \text{TSM}(\mathbf{x})_{t,c} = \begin{cases}
   \mathbf{x}_{t-1,c} & c < C/4 \\
@@ -160,92 +153,78 @@ another $1/\text{fold\_div}$ one step forward along the time axis,
   \end{cases}
   \label{eq:tsm}
 \end{equation}
-mixing temporal information at \emph{zero parameter cost} by re-indexing
-tensor slices \emph{before} every convolution, while spatial resolution is
-still full. After 8 such blocks, a $512$-d (R18) or $2048$-d (R50) per-frame
-vector is produced, the $T$ vectors are averaged, and a linear head
-$d\!\times\!33$ yields the logits. Total parameter count is therefore
-\emph{exactly} that of the backbone plus the head:
-$\approx\!11.2$\,M for ResNet18 ($P_\text{head}{=}512{\times}33{\approx}17$K)
-and $\approx\!23.6$\,M for ResNet50 ($P_\text{head}{=}2048{\times}33{\approx}68$K,
-of which $23.5$\,M sit in the backbone). TSM was designed for SSv2-style motion
-labels and is therefore a strong prior here (Fig.~\ref{fig:arch}).
+at \emph{zero} parameter cost, while spatial resolution is still full. The $T$
+final per-frame vectors are averaged and a linear head $d\!\times\!33$ yields
+the logits, so the total cost is exactly backbone $+$ head:
+$\approx\!11.2$\,M (R18) and $\approx\!23.6$\,M (R50, $23.5$\,M of which is the
+backbone). TSM was designed for SSv2-style motion labels and is a strong prior
+here (Fig.~\ref{fig:arch}).
 
-\noindent\textbf{VideoFormer-Lite (VFL)} instead separates spatial and temporal
-processing into two explicit stages. \emph{Stage 1:} a ResNet18 processes each
-frame independently, giving $T$ vectors of size $d{=}512$. \emph{Stage 2:} a
-learnable \texttt{[CLS]} token~\cite{dosovitskiy2021vit} is appended (sequence
-length $T{+}1{=}5$), and $n_\ell$ pre-norm Transformer
-blocks~\cite{xiong2020prenorm} (8 heads, MLP ratio $r{=}4$) perform global
-self-attention over the five tokens before the \texttt{[CLS]} representation is
-classified. Each block costs
+\noindent\textbf{VideoFormer-Lite (VFL)} instead separates the two stages
+explicitly: a ResNet18 encodes each frame \emph{independently} into $T$
+vectors of size $d{=}512$, a learnable \texttt{[CLS]}
+token~\cite{dosovitskiy2021vit} is appended ($T{+}1{=}5$ tokens), and $n_\ell$
+pre-norm Transformer blocks~\cite{xiong2020prenorm} (8 heads, ratio $r{=}4$)
+perform global self-attention over them \emph{after} pooling has already
+collapsed each frame to a single descriptor. Each block costs
 \begin{equation}
-  P_{\text{block}} = \underbrace{4d^2}_{\text{Q,K,V,O proj.}} +
-  \underbrace{2\,r\,d^2}_{\text{MLP}} + \underbrace{4d}_{\text{layer norms}}
-  \approx (4 + 2r)\,d^2 ,
+  P_{\text{block}} = \underbrace{4d^2}_{\text{Q,K,V,O}} +
+  \underbrace{2\,r\,d^2}_{\text{MLP}} + \underbrace{4d}_{\text{LN}}
+  \approx (4 + 2r)\,d^2 \approx 3.1\text{M},
   \label{eq:vfl_params}
 \end{equation}
-i.e.\ $\approx\!3.1$\,M for $d{=}512,\,r{=}4$. With $n_\ell{=}3$ blocks the
-Transformer head adds ${\approx}9.4$\,M on top of the ${\approx}11.2$\,M
-ResNet18 backbone, for a total of ${\approx}20.7$\,M --- nearly twice
-TSM-ResNet18, for \emph{zero} extra spatial capacity.
+so $n_\ell{=}3$ adds ${\approx}9.4$\,M to the ${\approx}11.2$\,M backbone, for
+${\approx}20.7$\,M total --- nearly twice TSM-ResNet18 for \emph{zero} extra
+spatial capacity.
 
 \paragraph{Where temporal mixing happens --- the key difference.}
-TSM mixes time at every spatial resolution, inside every residual block,
-\emph{before} any pooling: after 8 blocks of depth, each frame's
-representation already encodes a receptive field spanning all $T$ frames at the
-$(h, w)$ level. VFL pools all spatial information \emph{first}, then attends
-globally over the $T{+}1$ pooled vectors --- it sees motion only at the level
-of frame-averaged descriptors. For SSv2, where the discriminative cue is often
-a single finger or object edge displacing within a small region, this
-distinction is consequential: TSM retains the spatial precision that the cue
-lives in, whereas VFL has already discarded it by the time it reasons about
-time (Fig.~\ref{fig:arch}). This architectural argument is exactly what the
-controlled comparison in Sec.~\ref{sec:results} measures.
+TSM mixes time at full spatial resolution, before pooling: by block~8 each
+frame's representation already has a receptive field spanning all $T$ frames
+at the $(h,w)$ level. VFL pools \emph{first} and attends globally only over
+the $T{+}1$ frame-averaged descriptors --- it never sees motion at the pixel
+level. On SSv2, where the discriminative cue is typically a single finger or
+edge displacing within a small region, this is consequential: TSM keeps the
+spatial precision the cue lives in; VFL has already thrown it away
+(Fig.~\ref{fig:arch}). Sec.~\ref{sec:abl} turns this argument into a
+controlled measurement.
 
 \subsubsection{Critical frame-count fix}
-The single largest gain ($+4.4$\,pp) came from aligning the \texttt{num\_frames}
-parameter with the true clip length. Clips contain exactly four real frames;
-\texttt{num\_frames}\,$>$\,4 triggers \texttt{linspace} interpolation that
-duplicates frames: for TSM, two consecutive identical tokens make
-Eq.~\eqref{eq:tsm} read the same value twice, contributing zero temporal
-gradient for the shifted channels and corrupting the very signal the
-architecture is built around. Setting \texttt{num\_frames}\,$=$\,4 brought
-\texttt{tsm\_ultra\_v2} to $57.73\%$ internal / $38.25\%$ \texttt{val\_dir}
-($+4.41$ / $+3.34$\,pp); a first attempt to scale to ResNet50 \emph{at the old
-$T{=}8$} regressed to $45.26\%$ internal (Fig.~\ref{fig:permodel},
-Fig.~\ref{fig:backbone}), confirming that capacity cannot compensate for
-corrupted temporal input. Once \texttt{num\_frames}\,$=$\,4 was enforced, a
-second ResNet50 run (\texttt{tsm\_ultra\_resnet50\_rotating}, trained with
-rotating folds, Sec.~\ref{sec:rotating}) reaches \textbf{42.85\%}
-\texttt{val\_dir} --- our best single model, $+3.40$\,pp over the matched-data
-ResNet18 (Sec.~\ref{sec:abl}). The lesson generalises: \emph{fix the data
-pipeline before scaling the model}, and once the pipeline is correct, capacity
-\emph{does} pay off.
+The single largest gain ($+4.4$\,pp) came from matching \texttt{num\_frames}
+to the true clip length. Clips hold exactly four real frames;
+\texttt{num\_frames}\,$>$\,4 forces \texttt{linspace} interpolation that
+duplicates frames, so two consecutive identical tokens make
+Eq.~\eqref{eq:tsm} read the same value twice --- zero temporal gradient on the
+shifted channels, corrupting the signal TSM is built around. Setting
+\texttt{num\_frames}\,$=$\,4 lifted \texttt{tsm\_ultra\_v2} to $57.73\%$
+internal / $38.25\%$ \texttt{val\_dir} ($+4.41$/$+3.34$\,pp); a first
+ResNet50 attempt at the old $T{=}8$ regressed to $45.26\%$ internal
+(Fig.~\ref{fig:permodel}, Fig.~\ref{fig:backbone}) --- capacity cannot undo
+corrupted temporal input. Once $T{=}4$ was enforced, a second ResNet50 run
+(\texttt{tsm\_ultra\_resnet50\_rotating}, Sec.~\ref{sec:rotating}) reached
+\textbf{42.85\%} \texttt{val\_dir}, our best single model
+($+3.40$\,pp, Sec.~\ref{sec:abl}): \emph{fix the pipeline before scaling}, and
+capacity pays off once the signal is correct.
 
 \subsubsection{Regularisation recipe}
 All Track~A models share a regularisation stack (Table~\ref{tab:recipe}) whose
 most critical element is a \emph{warm-up delay} on
 MixUp~\cite{zhang2018mixup} and CutMix~\cite{yun2019cutmix}: both are disabled
 for the first 10 epochs so the backbone can form basic per-frame
-representations before label-mixing is applied --- a single change worth
-$+36.3$\,pp on VFL ($9.45\!\rightarrow\!45.78\%$). The intuition: a
-randomly-initialised classification head cannot meaningfully mix labels whose
-images it has not yet learned to distinguish, so early MixUp injects pure noise
-into the loss and collapses representations. The stack also includes label
-smoothing~\cite{muller2019labelsmooth}, RandAugment~\cite{cubuk2020randaugment},
-random erasing~\cite{zhong2020randomerase}, stochastic
-depth~\cite{huang2016stochdepth}, and AdamW~\cite{loshchilov2019adamw} with
-cosine annealing~\cite{loshchilov2017sgdr}. Focal loss~\cite{lin2017focal}
-concentrates gradient on confusable class pairs --- specifically the
-real-vs-pretended sinks (Sec.~\ref{sec:failure}); our $\gamma$-sweep
-(Sec.~\ref{sec:abl}) shows any focal weighting beats plain cross-entropy by
-${\approx}0.5$--$0.6$\,pp, with $\gamma{\in}[1,2]$ all within noise of each
-other. Augmentation is domain-aware: \emph{horizontal flip is disabled} because
-it inverts SSv2 direction-encoded labels (e.g.\ \emph{Pulling
-left$\rightarrow$right}); CutMix probability is kept low ($p{=}0.25$) because a
-cut patch spans all four frames and frequently occludes the hand/object motion
-that defines the label.
+representations before label-mixing starts --- worth $+36.3$\,pp on VFL alone
+($9.45\!\rightarrow\!45.78\%$), since a randomly-initialised head cannot
+meaningfully mix labels for images it cannot yet distinguish, and early MixUp
+collapses the representation instead of regularising it. The remaining stack
+(label smoothing~\cite{muller2019labelsmooth},
+RandAugment~\cite{cubuk2020randaugment},
+random erasing~\cite{zhong2020randomerase},
+stochastic depth~\cite{huang2016stochdepth}, focal
+loss~\cite{lin2017focal}, AdamW~\cite{loshchilov2019adamw} with cosine
+annealing~\cite{loshchilov2017sgdr}) is summarised in
+Table~\ref{tab:recipe}; two choices are domain-specific rather than
+off-the-shelf: \emph{horizontal flip is disabled} because it inverts SSv2's
+direction-encoded labels (e.g.\ \emph{Pulling left$\rightarrow$right}), and
+CutMix probability is kept low ($p{=}0.25$) because a cut patch spans all four
+frames and often occludes the very hand/object motion that defines the label.
 
 \begin{table}[t]
 \centering\small
@@ -282,23 +261,23 @@ global-attention head is data-hungry and lacks the structural temporal prior
 that TSM's shift provides; an ablation on the fold count
 (Sec.~\ref{sec:abl}) shows VFL is already saturated at $k{=}5$.
 
-The final closed-track submission fuses \emph{five} checkpoints by log-softmax
-late fusion. Three use 10-crop spatial TTA (5 crops $\times$ 2 flips):
+The final closed-track submission fuses \emph{five} checkpoints by
+log-softmax late fusion --- averaging in log-probability space down-weights
+over-confident errors and rewards agreement among differently-calibrated
+members. Three run with 10-crop spatial TTA (5 crops $\times$ 2 flips):
 \texttt{tsm\_ultra\_v2} ($57.73\%$ internal), its rotating-fold variant, and
-\texttt{video\_former\_lite\_ultra\_rot}. Two run without TTA (inference cost):
-the new \textbf{TSM-ResNet50 rotating} ($42.85\%$, our best single model) and a
-CE-trained ($\gamma{=}0$) TSM ablation that adds complementary calibration.
-Averaging in log-probability space down-weights over-confident errors and
-rewards agreement, suiting members of different calibration. The ensemble
-reaches \textbf{46.75\%} on the official \texttt{val\_dir}
-(Fig.~\ref{fig:ensemble}) and \textbf{0.5072} public / \textbf{0.4764} private
-on Kaggle --- our best closed-track leaderboard score, $+9.1$\,pp public over
-the strongest single-model submission (\texttt{tsm\_ultra\_v2} + TTA, $0.4163$;
-Table~\ref{tab:summary}). 10-crop TTA alone contributes ${\sim}1$\,pp on the
-strongest single model (Fig.~\ref{fig:tta}), with a visible trade-off on
-direction-encoded classes (Fig.~\ref{fig:ttatradeoff}) where the 5 hflip views
-push some confidences toward the mirror class even after label-aware logit
-remapping.
+\texttt{video\_former\_lite\_ultra\_rot}; two run without TTA (inference
+cost): the new \textbf{TSM-ResNet50 rotating} ($42.85\%$, our best single
+model) and a CE-trained ($\gamma{=}0$) TSM variant whose different loss
+geometry adds complementary calibration. The ensemble reaches
+\textbf{46.75\%} \texttt{val\_dir} (Fig.~\ref{fig:ensemble}) and
+\textbf{0.4785} public / \textbf{0.4547} private on Kaggle --- our best
+closed-track score, $+6.2$\,pp public over the strongest single-model
+submission (\texttt{tsm\_ultra\_v2}+TTA, $0.4163$; Table~\ref{tab:summary}).
+10-crop TTA alone adds ${\sim}1$\,pp on the strongest single model
+(Fig.~\ref{fig:tta}), with a visible trade-off on direction-encoded classes
+(Fig.~\ref{fig:ttatradeoff}): the 5 hflip views push some confidences toward
+the mirror class even after label-aware logit remapping.
 
 \subsection{Track B --- Open World}
 \label{sec:trackB}
@@ -315,87 +294,80 @@ unlabelled video without any SSv2 labels---a requirement for integrity
 
 \paragraph{Progressive unfreezing with LLRD.}
 We fine-tune V-JEPA in three phases with layer-wise learning-rate decay
-(LLRD)~\cite{howard2018ulmfit,clark2020electra,bao2022beit}, where lower
-encoder block $\ell$ receives $\eta\cdot\lambda^{\ell}$ with $\lambda{=}0.75$.
-\emph{Phase~0}: a frozen attentive probe (head only) reaches $0.672$ EMA
-internal val. \emph{Phase~1}: unfreezing the top-6 blocks with LLRD reaches
-$0.705$. \emph{Phase~2}: full-encoder fine-tuning reaches $0.728$ internal and
-$0.6411$ \texttt{val\_dir}. Freezing first stabilises the head and preserves the
+(LLRD)~\cite{howard2018ulmfit,clark2020electra,bao2022beit}, where encoder
+block $\ell$ receives $\eta\cdot\lambda^{\ell}$, $\lambda{=}0.75$.
+\emph{Phase~0} (frozen attentive probe, head only): $0.672$ EMA internal val;
+\emph{Phase~1} (top-6 blocks unfrozen with LLRD): $0.705$;
+\emph{Phase~2} (full-encoder fine-tuning): $0.728$ internal /
+$0.6411$ \texttt{val\_dir}. Freezing first stabilises the head and preserves
 pretrained feature geometry before large gradients reach lower layers; the
-characteristic staircase --- each phase warm-starting above the previous
-plateau --- is visible in Fig.~\ref{fig:vjepacurves}.
-(These training phases are distinct from the challenge's Stage~1/Stage~2
-leaderboard milestones.)
+resulting staircase, each phase warm-starting above the previous plateau, is
+visible in Fig.~\ref{fig:vjepacurves}. (These phases are distinct from the
+challenge's Stage~1/Stage~2 leaderboard milestones.)
 
 \paragraph{Window-capped source-frame re-extraction.}
-V-JEPA benefits from 16 input frames, but only four are shipped. Because folder
-names encode SSv2 video IDs, the full source WebM files are accessible. We
-re-extract 16 frames per clip in a \emph{window-capped} manner: the shipped
-\texttt{frame\_003} is matched against source frames by pixel-level mean
-absolute error to locate the end of the provided window, 16 frames are sampled
-uniformly within $[0,\text{window\_end}]$, and the search is hard-bounded to the
-first 50\% of the source clip so the withheld outcome ($>60\%$) is unreachable by
-construction (median window fraction $0.39$, max $0.50$;
-Fig.~\ref{fig:framehist}).
+V-JEPA benefits from 16 input frames but only four are shipped. Since folder
+names encode SSv2 video IDs, the source WebM files are reachable, so we
+re-extract 16 frames per clip in a \emph{window-capped} way: the shipped
+\texttt{frame\_003} is matched to source frames by pixel-level MAE to locate
+the end of the provided window, 16 frames are sampled uniformly within
+$[0,\text{window\_end}]$, and the search is hard-bounded to the first 50\% of
+the clip so the withheld outcome ($>60\%$) is unreachable by construction
+(median window fraction $0.39$, max $0.50$; Fig.~\ref{fig:framehist}).
 
 \paragraph{Pseudo-labelling.}
 Following noisy-student self-training~\cite{xie2020noisystudent,lee2013pseudo},
-the Phase-2 snapshot ensemble generated soft labels for the test clips;
-predictions with max probability $\geq 0.85$ were added as pseudo-labels (the
-model's over-confident calibration meant that this threshold retained all
-6{,}913 test clips, so pseudo-labelling effectively augments the train set with
-the entire test distribution under V-JEPA-ft's own predictions). The model is
-then continue-finetuned on train\,$\cup$\,pseudo-test. The resulting
-V-JEPA-pseudo reaches $0.6519$ \texttt{val\_dir} / $0.6410$ Kaggle, but the
-widened val/Kaggle gap (Sec.~\ref{sec:results}) signalled over-fitting to the
-validation distribution, so pseudo-labelling was not iterated.
+the Phase-2 ensemble soft-labelled the test clips; a $\geq 0.85$
+confidence threshold retained \emph{all} 6{,}913 clips (the model is
+over-confident), so pseudo-labelling effectively trained on
+train\,$\cup$\,test under the model's own predictions. Continue-fine-tuning
+on this union gave V-JEPA-pseudo ($0.6519$ \texttt{val\_dir} / $0.6410$
+Kaggle), but its widened val/Kaggle gap (Sec.~\ref{sec:results}) signalled
+over-fitting, so the loop was not iterated further.
 
 \paragraph{Honest cross-preprocessing ensemble.}
 The final Track~B system aggregates 14 checkpoints from three families, each
-fine-tuned with its own preprocessing: V-JEPA (6 snapshots, 16-frame 256\,px
-window-capped), VideoMAE-Base K400 (3, 4-frame 224\,px), VideoMAE-Large K400 (3,
-4-frame 224\,px) and TSM-ResNet50 (2, 4-frame). Inference runs each model on its
-own preprocessing chain; per-model softmax tensors are then combined by
-\emph{uniform} averaging. The key finding is that uniform averaging of diverse
-honest models outperforms learned or manual weighting
-(Sec.~\ref{sec:results}): architecturally distinct models produce uncorrelated
-errors that average out, so even weaker members raise the ensemble.
+run on its \emph{own} preprocessing chain: V-JEPA (6, 16-frame 256\,px
+window-capped), VideoMAE-Base/Large K400 (3+3, 4-frame 224\,px) and
+TSM-ResNet50 (2, 4-frame). Per-model softmax tensors are combined by
+\emph{uniform} averaging --- diverse, architecturally distinct models produce
+uncorrelated errors that average out, so even the weakest member
+(TSM-ResNet50) raises the ensemble (Sec.~\ref{sec:results}).
 
 \subsection{Reused vs.\ own code}
 \label{sec:reuse}
-We \emph{reuse}: the course starter repository (the Hydra configuration system,
-the \texttt{VideoFrameDataset} loader and the \texttt{train.py} skeleton); the
-torchvision ResNet~\cite{he2016resnet} and R(2+1)D~\cite{tran2018r2plus1d}
-backbones; and the pretrained HuggingFace V-JEPA\,2~\cite{bardes2025vjepa2} and
-VideoMAE~\cite{tong2022videomae} checkpoints (Track~B only). Our \emph{own}
-implementations are: the parameter-free TSM block wrapper (re-implemented from
-the description of Lin~et~al.~\cite{lin2019tsm}); VideoFormer-Lite, our
-CNN+Transformer temporal head inspired by ViT~\cite{dosovitskiy2021vit},
-TimeSformer~\cite{bertasius2021timesformer} and pre-LN
-Transformers~\cite{xiong2020prenorm}; the regularisation-warm-up recipe, the
-rotating $k$-fold protocol, the controlled ablation suite (focal-$\gamma$, VFL
-depth/fold-count/schedule sweeps), and the log-softmax ensemble / 10-crop TTA
-pipeline; and the full Track~B stack---window-capped source-frame re-extraction,
-the progressive-unfreezing\,+\,LLRD fine-tuning wrapper (following the
-layer-wise decay practice of~\cite{howard2018ulmfit,clark2020electra,bao2022beit}),
-and the noisy-student pseudo-labelling loop~\cite{xie2020noisystudent,lee2013pseudo}.
+\emph{Reused:} the course starter repo (Hydra config system,
+\texttt{VideoFrameDataset}, \texttt{train.py} skeleton); torchvision
+ResNet~\cite{he2016resnet} and R(2+1)D~\cite{tran2018r2plus1d} backbones; and
+the pretrained HuggingFace V-JEPA\,2~\cite{bardes2025vjepa2} and
+VideoMAE~\cite{tong2022videomae} checkpoints (Track~B only).
+\emph{Our own:} the parameter-free TSM wrapper (re-implemented from
+Lin~et~al.~\cite{lin2019tsm}); VideoFormer-Lite, our CNN+Transformer head
+inspired by ViT~\cite{dosovitskiy2021vit}, TimeSformer~\cite{bertasius2021timesformer}
+and pre-LN Transformers~\cite{xiong2020prenorm}; the regularisation-warm-up
+recipe, rotating $k$-fold protocol, controlled ablation suite, and
+log-softmax ensemble / 10-crop TTA pipeline; and the full Track~B stack ---
+window-capped re-extraction, the progressive-unfreezing+LLRD wrapper
+(following~\cite{howard2018ulmfit,clark2020electra,bao2022beit}), and the
+noisy-student pseudo-labelling loop~\cite{xie2020noisystudent,lee2013pseudo}.
 
 % =====================================================================
 \section{Results}
 \label{sec:results}
 
 \paragraph{Overall.}
-Table~\ref{tab:summary} reports headline results, now with Kaggle scores for
+Table~\ref{tab:summary} reports headline results with Kaggle scores for
 \emph{both} tracks. Track~A reaches \textbf{46.75\%} \texttt{val\_dir} /
-\textbf{0.5072} Kaggle public from scratch; Track~B reaches \textbf{0.6586}
-Kaggle top-1 (internal val $65.19\%$) with the 14-model uniform
-ensemble---well above the $0.55$ provided baseline and approaching the $0.74$
-second-place public reference. The ${\approx}15$\,pp Kaggle gap between the two
-tracks' best submissions quantifies the practical value of large-scale
-self-supervised pretraining, unavailable in the closed track; the gap is
-markedly smaller than the ${\sim}18$-pp \texttt{val\_dir} gap because Track~A's
-ensemble generalises comparatively better from \texttt{val\_dir} to the Kaggle
-test distribution (see also the calibration discussion below).
+\textbf{0.4785} Kaggle public from scratch; Track~B reaches \textbf{0.6586}
+Kaggle top-1 ($65.19\%$ internal val) with the 14-model uniform ensemble ---
+well above the $0.55$ baseline and close to the $0.74$ second-place
+reference. The ${\approx}18$-pp Kaggle gap between the tracks' best
+submissions closely tracks the ${\sim}18$-pp \texttt{val\_dir} gap, so the
+price of forgoing large-scale self-supervised pretraining is essentially the
+same whether measured on the internal split or on the independent Kaggle test
+distribution --- both tracks generalise from \texttt{val\_dir} to Kaggle with
+a comparable, small, and consistently \emph{positive} offset (calibration
+discussion below).
 
 \begin{table}[t]
 \centering\small
@@ -409,7 +381,7 @@ A & TSM-ResNet18 (single)       & 38.25\% & 0.3576 & 0.3442 \\
 A & VFL-Ultra (single)          & 32.11\% & ---    & --- \\
 A & TSM-ResNet50 rot.\ (single) & \textbf{42.85}\% & --- & --- \\
 A & 3-model ens.\ + TTA (closed)& 44.03\% & 0.4508 & 0.4260 \\
-A & \textbf{5-model ens.}\ (R50)& \textbf{46.75}\% & \textbf{0.5072} & \textbf{0.4764} \\
+A & \textbf{5-model ens.}\ (R50)& \textbf{46.75}\% & \textbf{0.4785} & \textbf{0.4547} \\
 \midrule
 B & V-JEPA-ft standalone        & 64.11\% & \multicolumn{2}{c}{0.6361} \\
 B & V-JEPA-pseudo               & 65.19\% & \multicolumn{2}{c}{0.6410} \\
@@ -441,67 +413,52 @@ old $T{=}8$, regressed $8$\,pp below the $T{=}4$ ResNet18 internal score
 (Fig.~\ref{fig:permodel}).
 
 \paragraph{Architecture: TSM vs.\ VFL ($+3.0$\,pp for local mixing).}
-At matched settings (rotating folds, $T{=}4$, ResNet18 backbone, no TTA),
-TSM reaches $39.45\%$ \texttt{val\_dir} vs.\ VFL's $36.44\%$
-($+3.01$\,pp). This is the controlled test of the architectural argument in
-Sec.~\ref{sec:arch}: with backbone, frame count, recipe and protocol held
-fixed, the only difference is \emph{where} the two models mix time --- before
-pooling (TSM) or after (VFL) --- and the local-mixing model wins by a clear
-margin, consistent with SSv2 labels being defined by small, spatially-localised
-motion cues that pooling destroys.
+At matched settings (rotating folds, $T{=}4$, ResNet18, no TTA), TSM reaches
+$39.45\%$ \texttt{val\_dir} vs.\ VFL's $36.44\%$ ($+3.01$\,pp). With backbone,
+frame count, recipe and protocol held fixed, the only remaining difference is
+\emph{where} the two mix time --- before pooling (TSM) or after (VFL) --- so
+this is the controlled test of Sec.~\ref{sec:arch}'s argument, and local
+mixing wins by a clear margin, as expected for labels defined by small,
+spatially-localised motion cues that pooling destroys.
 
 \paragraph{Backbone scale-up, done right ($+3.4$\,pp).}
-Once $T{=}4$ and rotating folds are fixed, replacing the ResNet18 backbone with
-ResNet50 ($11.2\!\rightarrow\!23.6$\,M parameters, Sec.~\ref{sec:arch}) brings
+With $T{=}4$ and rotating folds fixed, swapping the ResNet18 backbone for
+ResNet50 ($11.2\!\rightarrow\!23.6$\,M params) brings
 $39.45\%\!\rightarrow\!42.85\%$ \texttt{val\_dir} ($+3.40$\,pp,
-Fig.~\ref{fig:backbone}). Reading this together with the $T{=}8$ regression
-above closes the loop on our central architectural claim: \emph{capacity is
-useless on top of a corrupted temporal signal, but valuable once the signal is
-correct} --- the $2.1\times$ parameter increase here converts cleanly into
-accuracy, whereas the earlier $T{=}8$ run wasted the same increase on
-duplicated frames.
+Fig.~\ref{fig:backbone}). Together with the $T{=}8$ regression above, this
+closes the loop on our central claim: \emph{capacity is useless on top of a
+corrupted temporal signal, but pays off once the signal is correct} --- the
+same $2.1\times$ parameter increase that wasted itself on duplicated frames at
+$T{=}8$ converts cleanly into accuracy at $T{=}4$.
 
-\paragraph{Focal-loss $\gamma$ sweep ($+0.5$--$0.6$\,pp, optimum flat).}
-With every other variable frozen (rotating folds, TSM-ResNet18), CE
-($\gamma{=}0$) reaches $38.92\%$, $\gamma{=}1$ reaches $39.50\%$, and
-$\gamma{=}2$ reaches $39.45\%$ (Fig.~\ref{fig:abla_tsm}). Any focal weighting
-beats CE by ${\approx}0.5$\,pp; the $\gamma{=}1$ vs.\ $\gamma{=}2$ gap
-($0.05$\,pp) is within run-to-run noise, so the optimal $\gamma$ lies in
-$[1,2]$ and its exact value is not critical --- evidence that the gain comes
-from \emph{having} a confusable-pair-aware loss, not from tuning it finely.
-Despite scoring lowest standalone, the CE model contributes $+0.52$\,pp to the
-5-model ensemble (Sec.~\ref{sec:rotating}): its different loss geometry yields
-a different confidence calibration, which is exactly the kind of
-complementary error the log-softmax fusion exploits.
-
-\paragraph{VFL depth and fold count.}
-Reducing VFL from 3 to 2 Transformer layers
-(Eq.~\eqref{eq:vfl_params}: $P_\text{Transformer}$ drops from
-$9.4\!\rightarrow\!6.3$\,M) costs $36.44\%\!\rightarrow\!35.36\%$
-($-1.08$\,pp): the third block provides a real, if modest, gain at this data
-scale (Fig.~\ref{fig:abla_vfl}). Increasing the rotation from 5 to 10 folds
-(90\% vs.\ 80\% of the data seen per epoch) instead \emph{costs} $-0.46$\,pp
-($36.44\!\rightarrow\!35.98\%$): VFL has already saturated its
-data-utilisation capacity at $k{=}5$, so additional coverage trades off against
-noisier gradient estimates from smaller per-fold validation sets. Switching the
-SGDR restart shape ($T_\text{mult}\,1\!\rightarrow\!2$) changes accuracy by at
-most $-0.12$\,pp for either architecture --- the rotating-fold protocol already
-supplies enough implicit regularisation that the exact LR-restart geometry is
-largely irrelevant.
+\paragraph{Focal-loss $\gamma$ sweep and VFL ablations (small, informative effects).}
+With TSM-ResNet18 otherwise frozen, CE ($\gamma{=}0$) reaches $38.92\%$,
+$\gamma{=}1$ reaches $39.50\%$, $\gamma{=}2$ reaches $39.45\%$
+(Fig.~\ref{fig:abla_tsm}): any focal weighting beats CE by
+${\approx}0.5$\,pp, but $\gamma{\in}[1,2]$ is within run-to-run noise --- the
+gain comes from \emph{having} a confusable-pair-aware loss, not from tuning it
+finely. The CE model nonetheless adds $+0.52$\,pp to the final ensemble
+(Sec.~\ref{sec:rotating}): a different loss geometry gives it a different
+calibration, exactly the complementary error log-softmax fusion exploits. On
+VFL (Fig.~\ref{fig:abla_vfl}), dropping from 3 to 2 Transformer layers
+(Eq.~\eqref{eq:vfl_params}: $-3.1$\,M) costs $-1.08$\,pp
+($36.44\!\rightarrow\!35.36\%$), and over-rotating from 5 to 10 folds costs a
+further $-0.46$\,pp --- VFL already saturates its data-utilisation capacity at
+$k{=}5$, so extra coverage just adds gradient noise from smaller per-fold
+validation sets.
 
 \paragraph{Ensemble components and leave-one-out.}
 \label{sec:loo}
-Table~\ref{tab:loo} (Fig.~\ref{fig:loo}) shows the leave-one-out analysis on
+Table~\ref{tab:loo} (Fig.~\ref{fig:loo}) leaves out one member at a time from
 the final 5-model ensemble (46.75\%). Every member is necessary, but the
-\emph{margins} are revealing: removing the ResNet50 model costs
-$-1.33$\,pp --- by far the largest single drop, larger than removing any
-same-backbone TSM-ResNet18 variant ($-0.31$ to $-0.47$\,pp) or even the
-architecturally-different VFL ($-0.64$\,pp). \textbf{Backbone diversity
-contributes more to the ensemble than architecture-family diversity at matched
-capacity.} This refines the earlier (3-model) finding that TSM and VFL are
-complementary: that remains true, but the single largest source of
-decorrelated, useful error in our pool is a model that simply \emph{sees more}
-(deeper backbone), not one that sees \emph{differently}.
+\emph{margins} are revealing: dropping the ResNet50 model costs $-1.33$\,pp,
+by far the largest drop --- more than any same-backbone TSM-ResNet18 variant
+($-0.31$ to $-0.47$\,pp) or even the architecturally distinct VFL
+($-0.64$\,pp). \textbf{Backbone diversity contributes more than
+architecture-family diversity at matched capacity}: TSM and VFL remain
+complementary, but the single largest source of useful, decorrelated error is
+a model that simply \emph{sees more} (deeper backbone), not one that sees
+\emph{differently}.
 
 \begin{table}[t]
 \centering\small
@@ -525,14 +482,14 @@ far the dominant contributor, ahead of the architecturally distinct VFL.}
 
 \subsection{Track~B ablations}
 \paragraph{Honest Kaggle progression.}
-Table~\ref{tab:kaggle} (with Fig.~\ref{fig:kagglejourney} as its visual
-counterpart) traces every clean submission. The $21$\,pp gap between
-the discarded leaky run ($0.81$) and the first honest baseline ($0.6361$)
-quantifies what data leakage was buying; every subsequent gain was earned by
-legitimate architectural diversity (Fig.~\ref{fig:permodel} is the Track~A
-counterpart). Fig.~\ref{fig:enssize} plots Kaggle vs.\ ensemble size: returns
-are still positive at $n{=}14$, and the $n{=}6$ V-JEPA-only configuration
-underperforms the $n{=}9$ uniform mix despite higher individual accuracies.
+Table~\ref{tab:kaggle} (Fig.~\ref{fig:kagglejourney}) traces every clean
+submission. The $21$\,pp gap between the discarded leaky run ($0.81$) and the
+first honest baseline ($0.6361$) quantifies what data leakage was buying;
+every subsequent point was earned by legitimate architectural diversity.
+Fig.~\ref{fig:enssize} plots Kaggle vs.\ ensemble size: returns stay positive
+at $n{=}14$, and the $6$-model V-JEPA-only configuration underperforms the
+$9$-model uniform mix despite higher individual accuracies --- the first hint
+that family diversity matters more than per-model strength.
 
 \begin{table}[t]
 \centering\small
@@ -557,22 +514,21 @@ baseline). Diversity, not single-family scaling, drives every gain.}
 \end{table}
 
 \paragraph{Diversity beats weighting.}
-Table~\ref{tab:strategy} isolates ensemble strategy on a fixed checkpoint pool.
-A 6-snapshot V-JEPA-only ensemble ($0.6410$) \emph{under-performs} a 12-model
-uniform mix ($0.6546$) despite V-JEPA's higher individual accuracy; manual
-$3{:}1$ weighting toward V-JEPA ($0.6499$) falls between the two. Uniform
+Table~\ref{tab:strategy} isolates ensemble strategy on a fixed checkpoint
+pool: a 6-snapshot V-JEPA-only mix ($0.6410$) \emph{under-performs} a
+12-model uniform mix ($0.6546$) despite higher individual accuracy, and
+manual $3{:}1$ weighting toward V-JEPA ($0.6499$) lands in between. Uniform
 averaging of architecturally distinct families wins because their errors are
-uncorrelated. Table~\ref{tab:agree} makes this concrete: TSM-ResNet50, though
-weakest standalone ($0.3364$ \texttt{val\_dir}, Table~\ref{tab:perfamily}), has
-the lowest pairwise agreement with every transformer family ($0.37$--$0.38$),
-whereas two V-JEPA variants agree $0.85$---so a V-JEPA-only ensemble is
-near-redundant. Fig.~\ref{fig:learnedw} shows the failure mode of learned
-weighting on the same pool: a softmax-weighted fit collapses ${\sim}82\%$ of
-mass onto the two strongest checkpoints and effectively zeroes K400, throwing
-away the very decorrelation that the uniform ensemble exploits. This mirrors,
-at a larger scale, our Track~A finding (Sec.~\ref{sec:loo}) that the most
-valuable ensemble member is the one that is most \emph{different}, not the one
-that is individually strongest.
+uncorrelated --- Table~\ref{tab:agree} makes this concrete: TSM-ResNet50,
+though weakest standalone ($0.3364$ \texttt{val\_dir}, Table~\ref{tab:perfamily}),
+has the \emph{lowest} pairwise agreement with every transformer family
+($0.37$--$0.38$), while two V-JEPA variants agree at $0.85$ (near-redundant).
+Fig.~\ref{fig:learnedw} shows why naive learned weighting fails on the same
+pool: a softmax fit collapses ${\sim}82\%$ of its mass onto the two strongest
+checkpoints and effectively zeroes K400, discarding the decorrelation that
+the uniform ensemble exploits --- the same lesson as Track~A's
+leave-one-out (Sec.~\ref{sec:loo}): the most valuable member is the most
+\emph{different}, not the strongest.
 
 \begin{table}[t]
 \centering\small
@@ -633,16 +589,15 @@ through uncorrelated errors.}
 \end{table}
 
 \paragraph{Calibration.}
-The \texttt{val\_dir}$\rightarrow$Kaggle gap is $0.005$ for V-JEPA-ft but $0.011$
-for V-JEPA-pseudo---a doubling that warned us against further pseudo-label
-iterations. By contrast, Track~A's best ensemble has a \emph{negative} gap
-($46.75\%$ \texttt{val\_dir} vs.\ $0.5072$ Kaggle public, i.e.\ Kaggle is
-\emph{higher}): a from-scratch model trained with heavy augmentation is, if
-anything, slightly better calibrated to an unseen test distribution than to its
-own (smaller, finite) validation set, whereas a fine-tuned pretrained model can
-specialise to \texttt{val\_dir} quirks. The train-split$\rightarrow$Kaggle gap
-for Track~B (${\approx}0.09$) reflects that the internal split is drawn from
-the training distribution while the Kaggle test set is sampled independently.
+The $\texttt{val\_dir}{-}$Kaggle gap is $+0.005$ for V-JEPA-ft but doubles to
+$+0.011$ for V-JEPA-pseudo --- the signal that stopped us from iterating
+pseudo-labels further. Track~A's best ensemble shows the same magnitude with
+the \emph{opposite} sign ($46.75\%$ \texttt{val\_dir} vs.\ $0.4785$ Kaggle
+public, gap $-0.011$, i.e.\ Kaggle scores \emph{higher}): a from-scratch model
+trained with heavy augmentation generalises to the unseen test distribution at
+least as well as to its own finite validation split, whereas a fine-tuned
+pretrained model can specialise to \texttt{val\_dir} quirks --- and the more
+it does so (pseudo-labelling), the wider that gap grows.
 
 \subsection{Failure analysis}
 \label{sec:failure}
@@ -700,7 +655,7 @@ mixing (TSM) beats global post-pooling attention (VFL) by $+3.0$\,pp at matched
 capacity, and a $2.1\times$ deeper backbone then adds a further $+3.4$\,pp
 (\textbf{42.85\%} \texttt{val\_dir}, our best single model). The resulting
 five-model log-softmax ensemble reaches \textbf{46.75\%} \texttt{val\_dir} and
-\textbf{0.5072} on the public Kaggle leaderboard, with leave-one-out analysis
+\textbf{0.4785} on the public Kaggle leaderboard, with leave-one-out analysis
 showing that backbone diversity (R50 vs.\ R18) contributes more to the ensemble
 than architecture-family diversity at equal capacity. \textbf{Track~B} shows
 that progressive unfreezing with LLRD enables effective fine-tuning of large
@@ -716,33 +671,29 @@ forward from reverse motion---requires the withheld outcome, which four frames
 cannot supply.
 
 \paragraph{Future work.}
-(1)~Running 10-crop TTA for TSM-ResNet50 (expected ${\sim}{+}2$\,pp based on the
-ResNet18 measurement, currently impractical at submission time due to inference
-cost); (2)~V-JEPA-Giant once inference-time memory is addressed; (3)~targeted
-class rebalancing for the \emph{holding}/\emph{pretending} sinks in both tracks;
-(4)~temperature-scaled confidence thresholds for a second, less over-fitting
-pseudo-label round; (5)~a 15th Track~B ensemble member from a 16-frame
-window-capped VideoMAE-Large checkpoint, completed after the leaderboard freeze,
-yielded $0.6592$ (within noise of $0.6586$, confirming returns have flattened);
-(6)~explicit trajectory-prediction heads to attack the real-vs-pretended
-ambiguity directly; (7)~applying the $T{=}4$ fix and rotating-folds protocol to
-the Track~B TSM family, whose current weakness ($0.3364$ \texttt{val\_dir})
-likely stems from the same frame-count issue that cost Track~A $4.4$\,pp.
+(1)~10-crop TTA for TSM-ResNet50 (${\sim}{+}2$\,pp expected, too costly to run
+before the deadline); (2)~V-JEPA-Giant once inference memory allows;
+(3)~class rebalancing for the \emph{holding}/\emph{pretending} sinks;
+(4)~temperature-scaled thresholds for a second, less over-fitting pseudo-label
+round; (5)~a 15th Track~B member (16-frame VideoMAE-Large, completed
+post-freeze) yielded $0.6592$ --- within noise of $0.6586$, i.e.\ returns have
+flattened; (6)~trajectory-prediction heads for the real-vs-pretended
+ambiguity; (7)~porting the $T{=}4$ fix and rotating folds to the weak
+Track~B TSM family ($0.3364$ \texttt{val\_dir}), likely hit by the same
+frame-count issue that cost Track~A $4.4$\,pp.
 
 % =====================================================================
 \section*{Contributions}
 \textbf{Andrea Signoretti} designed and implemented the full Track~A
 (Closed-World) pipeline: the TSM-ResNet and VideoFormer-Lite models, the
-Hydra training/$k$-fold framework, the regularisation warm-up and frame-count
-analysis, the ResNet50 backbone scale-up, the controlled ablation suite
-(architecture, focal-$\gamma$, VFL depth/folds/schedule), and the log-softmax
-ensemble/TTA code, and produced the Track~A ablation and per-class figures.
+Hydra training/$k$-fold framework, the regularisation-warm-up and
+frame-count fixes, the ResNet50 scale-up, the controlled ablation suite, and
+the log-softmax ensemble/TTA code, and produced the Track~A figures.
 \textbf{Florian Guillaumey} designed and implemented the full Track~B
-(Open-World) pipeline: the window-capped source-frame re-extraction, the
-V-JEPA\,2 fine-tuning wrapper with progressive unfreezing and LLRD, the
-pseudo-labelling stage, the honest cross-preprocessing 14-model ensemble, and
-the data-integrity audit. Both authors jointly analysed results and wrote this
-report.
+(Open-World) pipeline: window-capped re-extraction, the V-JEPA\,2
+progressive-unfreezing/LLRD wrapper, pseudo-labelling, the honest
+cross-preprocessing 14-model ensemble, and the data-integrity audit. Both
+authors jointly analysed results and wrote this report.
 
 % =====================================================================
 \clearpage
@@ -808,7 +759,7 @@ All figures are referenced from the main text (Secs.~\ref{sec:trackA}--\ref{sec:
   \caption{Track~A ensemble vs.\ its components. Log-softmax late fusion of
   two TSM-ResNet18 variants, one VFL variant (all +TTA), the new
   TSM-ResNet50 and a CE-trained TSM ablation (no TTA) reaches $46.75\%$
-  \texttt{val\_dir} and $0.5072$ public / $0.4764$ private on Kaggle ---
+  \texttt{val\_dir} and $0.4785$ public / $0.4547$ private on Kaggle ---
   our best closed-track submission (Sec.~\ref{sec:rotating}).}
   \label{fig:ensemble}
 \end{figure}

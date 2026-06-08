@@ -30,21 +30,21 @@ from tqdm.auto import tqdm
 from dataset.video_dataset import collect_video_samples
 from models.cnn_baseline import CNNBaseline
 from models.cnn_lstm import CNNLSTM
-from models.r2plus1d import R2Plus1D
-from models.tsm_gru import TSMBiGRU
+from models.trackA_r2plus1d import R2Plus1D
+from models.trackA_tsm_gru import TSMBiGRU
 from models.tsm_resnet import TSMResNet
-from models.video_former_lite import VideoFormerLite
+from models.trackA_video_former_lite import VideoFormerLite
 try:
-    from models.coatnet import CoAtNetVideo
+    from models.trackA_coatnet import CoAtNetVideo
 except ImportError:
     CoAtNetVideo = None  # type: ignore[assignment,misc]
 try:
-    from models.efficientformer import EfficientFormerVideo
+    from models.trackA_efficientformer import EfficientFormerVideo
 except ImportError:
     EfficientFormerVideo = None  # type: ignore[assignment,misc]
-from models.maxvit import MaxViTVideo
-from models.vit_rnn import ViTBiGRU, ViTBiGRUAttn, ViTPerceiver, ViTSBiGRUAttn
-from models.vit_spacetime import ViTSpaceTimePerceiver
+from models.trackA_maxvit import MaxViTVideo
+from models.trackA_vit_rnn import ViTBiGRU, ViTBiGRUAttn, ViTPerceiver, ViTSBiGRUAttn
+from models.trackA_vit_spacetime import ViTSpaceTimePerceiver
 from utils import (
     build_transforms,
     build_weighted_sampler,
