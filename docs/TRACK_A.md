@@ -7,9 +7,11 @@
 ---
 
 ## 1. Architecture Progression
-
 All models map an input tensor `(B, T, C, H, W)` to logits `(B, 33)`.
 Every architecture was trained from scratch (random initialisation).
+
+![image](/docs/figures/track_a/arch_comparison.png)
+
 
 ### 1.1 CNN Baseline — `src/models/cnn_baseline.py`
 
@@ -67,17 +69,7 @@ Input (B, T, C, H, W)
 Originally designed for SSv2 (Lin et al., ICCV 2019) — that dataset's motion-defined
 labels (e.g. "Pouring X into Y") are exactly what TSM was optimised for.
 
-### 1.5 Other Architectures Tried
 
-| Model | File | Result | Notes |
-|---|---|---|---|
-| R(2+1)D-18 | `trackA_r2plus1d.py` | Killed at ep 15 | Poor from-scratch convergence |
-| TSM-BiGRU | `trackA_tsm_gru.py` | ~7.6% internal val | TSM-ResNet50 + BiGRU; poor from scratch |
-| MaxViT | `trackA_maxvit.py` | — | Frame interpolation 4→8; architectural experiment |
-| CoAtNet | `trackA_coatnet.py` | — | Optional dependency; comparable to VFL |
-| EfficientFormer | `trackA_efficientformer.py` | — | Lighter alternative to VFL |
-
----
 
 ## 2. Key Discoveries
 

@@ -1,14 +1,9 @@
-\begin{thebibliography}{24}
+\begin{thebibliography}{11}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{\texttt{#1}}
 \expandafter\ifx\csname urlstyle\endcsname\relax
   \providecommand{\doi}[1]{doi: #1}\else
   \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
-
-\bibitem[Bao et~al.(2022)Bao, Dong, Piao, and Wei]{bao2022beit}
-Hangbo Bao, Li Dong, Songhao Piao, and Furu Wei.
-\newblock {BEiT: BERT Pre-Training of Image Transformers}.
-\newblock In \emph{ICLR}, 2022.
 
 \bibitem[Bardes et~al.(2025)Bardes, Garrido, Ponce, Rabbat, LeCun, Assran, and
   Ballas]{bardes2025vjepa2}
@@ -23,18 +18,6 @@ Adrien Bardes, Quentin Garrido, Jean Ponce, Michael Rabbat, Yann LeCun, Mahmoud
 Gedas Bertasius, Heng Wang, and Lorenzo Torresani.
 \newblock {Is Space-Time Attention All You Need for Video Understanding?}
 \newblock In \emph{ICML}, 2021.
-
-\bibitem[Clark et~al.(2020)Clark, Luong, Le, and Manning]{clark2020electra}
-Kevin Clark, Minh-Thang Luong, Quoc~V. Le, and Christopher~D. Manning.
-\newblock {ELECTRA: Pre-training Text Encoders as Discriminators Rather Than
-  Generators}.
-\newblock In \emph{ICLR}, 2020.
-
-\bibitem[Cubuk et~al.(2020)Cubuk, Zoph, Shlens, and Le]{cubuk2020randaugment}
-Ekin~D. Cubuk, Barret Zoph, Jonathon Shlens, and Quoc~V. Le.
-\newblock {RandAugment: Practical Automated Data Augmentation with a Reduced
-  Search Space}.
-\newblock In \emph{CVPR Workshops}, 2020.
 
 \bibitem[Dosovitskiy et~al.(2021)Dosovitskiy, Beyer, Kolesnikov, Weissenborn,
   Zhai, Unterthiner, Dehghani, Minderer, Heigold, Gelly, Uszkoreit, and
@@ -61,30 +44,6 @@ Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
 \newblock {Deep Residual Learning for Image Recognition}.
 \newblock In \emph{CVPR}, 2016.
 
-\bibitem[He et~al.(2022)He, Chen, Xie, Li, Doll{\'a}r, and Girshick]{he2022mae}
-Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li, Piotr Doll{\'a}r, and Ross
-  Girshick.
-\newblock {Masked Autoencoders Are Scalable Vision Learners}.
-\newblock In \emph{CVPR}, 2022.
-
-\bibitem[Howard and Ruder(2018)]{howard2018ulmfit}
-Jeremy Howard and Sebastian Ruder.
-\newblock {Universal Language Model Fine-tuning for Text Classification}.
-\newblock In \emph{ACL}, 2018.
-
-\bibitem[Huang et~al.(2016)Huang, Sun, Liu, Sedra, and
-  Weinberger]{huang2016stochdepth}
-Gao Huang, Yu Sun, Zhuang Liu, Daniel Sedra, and Kilian~Q. Weinberger.
-\newblock {Deep Networks with Stochastic Depth}.
-\newblock In \emph{ECCV}, 2016.
-
-\bibitem[Lee(2013)]{lee2013pseudo}
-Dong-Hyun Lee.
-\newblock {Pseudo-Label: The Simple and Efficient Semi-Supervised Learning
-  Method for Deep Neural Networks}.
-\newblock In \emph{ICML Workshop on Challenges in Representation Learning},
-  2013.
-
 \bibitem[Lin et~al.(2019)Lin, Gan, and Han]{lin2019tsm}
 Ji Lin, Chuang Gan, and Song Han.
 \newblock {TSM: Temporal Shift Module for Efficient Video Understanding}.
@@ -96,40 +55,11 @@ Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Doll{\'a}r.
 \newblock {Focal Loss for Dense Object Detection}.
 \newblock In \emph{ICCV}, 2017.
 
-\bibitem[Loshchilov and Hutter(2017)]{loshchilov2017sgdr}
-Ilya Loshchilov and Frank Hutter.
-\newblock {SGDR: Stochastic Gradient Descent with Warm Restarts}.
-\newblock In \emph{ICLR}, 2017.
-
-\bibitem[Loshchilov and Hutter(2019)]{loshchilov2019adamw}
-Ilya Loshchilov and Frank Hutter.
-\newblock {Decoupled Weight Decay Regularization}.
-\newblock In \emph{ICLR}, 2019.
-
-\bibitem[M{\"u}ller et~al.(2019)M{\"u}ller, Kornblith, and
-  Hinton]{muller2019labelsmooth}
-Rafael M{\"u}ller, Simon Kornblith, and Geoffrey Hinton.
-\newblock {When Does Label Smoothing Help?}
-\newblock In \emph{NeurIPS}, 2019.
-
 \bibitem[Tong et~al.(2022)Tong, Song, Wang, and Wang]{tong2022videomae}
 Zhan Tong, Yibing Song, Jue Wang, and Limin Wang.
 \newblock {VideoMAE: Masked Autoencoders are Data-Efficient Learners for
   Self-Supervised Video Pre-Training}.
 \newblock In \emph{NeurIPS}, 2022.
-
-\bibitem[Tran et~al.(2018)Tran, Wang, Torresani, Ray, LeCun, and
-  Paluri]{tran2018r2plus1d}
-Du Tran, Heng Wang, Lorenzo Torresani, Jamie Ray, Yann LeCun, and Manohar
-  Paluri.
-\newblock {A Closer Look at Spatiotemporal Convolutions for Action
-  Recognition}.
-\newblock In \emph{CVPR}, 2018.
-
-\bibitem[Xie et~al.(2020)Xie, Luong, Hovy, and Le]{xie2020noisystudent}
-Qizhe Xie, Minh-Thang Luong, Eduard Hovy, and Quoc~V. Le.
-\newblock {Self-Training with Noisy Student Improves ImageNet Classification}.
-\newblock In \emph{CVPR}, 2020.
 
 \bibitem[Xiong et~al.(2020)Xiong, Yang, He, Zheng, Zheng, Xing, Zhang, Lan,
   Wang, and Liu]{xiong2020prenorm}
@@ -150,11 +80,5 @@ Sangdoo Yun, Dongyoon Han, Seong~Joon Oh, Sanghyuk Chun, Junsuk Choe, and
 Hongyi Zhang, Moustapha Cisse, Yann~N. Dauphin, and David Lopez-Paz.
 \newblock {mixup: Beyond Empirical Risk Minimization}.
 \newblock In \emph{ICLR}, 2018.
-
-\bibitem[Zhong et~al.(2020)Zhong, Zheng, Kang, Li, and
-  Yang]{zhong2020randomerase}
-Zhun Zhong, Liang Zheng, Guoliang Kang, Shaozi Li, and Yi Yang.
-\newblock {Random Erasing Data Augmentation}.
-\newblock In \emph{AAAI}, 2020.
 
 \end{thebibliography}

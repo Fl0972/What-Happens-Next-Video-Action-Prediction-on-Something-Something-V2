@@ -13,11 +13,11 @@ the model must predict the action outcome from motion onset alone.
 
 | Track | Constraint | Best result | Details |
 |---|---|---|---|
-| **A — Closed World** | Train from scratch, no pretrained weights | **44.03% top-1 / 75.37% top-5** (val-dir) | [docs/TRACK_A.md](docs/TRACK_A.md) |
-| **B — Open World** | External data and pretrained models allowed | **0.6586 Kaggle top-1** (16th overall) | [docs/TRACK_B.md](docs/TRACK_B.md) |
+| **A — Closed World** | Train from scratch, no pretrained weights | **47.85% Private Kaggle top-1 score** (val-dir) | [docs/TRACK_A.md](docs/TRACK_A.md) |
+| **B — Open World** | External data and pretrained models allowed | **0.6586 Private Kaggle top-1** (16th overall) | [docs/TRACK_B.md](docs/TRACK_B.md) |
 
 A digest of all results across both tracks is in [RESULTS.md](RESULTS.md).  
-The full academic reports are in [docs/reports/](docs/reports/).
+The full academic report is at [Experiment_report.pdf](Experiment_report.pdf).
 
 ---
 
@@ -30,9 +30,7 @@ src/                        # All Python source code
   create_submission.py      # Generate Kaggle submission CSV
   train_kfold.py            # K-fold / rotating-fold training
   models/                   # Model architectures
-    tsm_resnet.py           # TSM-ResNet (Track A best single model)
     trackA_video_former_lite.py  # VideoFormer-Lite (Track A)
-    trackA_r2plus1d.py      # R(2+1)D (Track A closed-track)
     videomae.py             # VideoMAE wrapper (Track B)
     vjepa.py                # V-JEPA 2 wrapper (Track B)
     ...
@@ -57,12 +55,14 @@ docs/
   TRACK_A.md                # Track A: method, experiments, ablations, results
   TRACK_B.md                # Track B: method, integrity story, results
   figures/
-    track_a/                # Track A analysis figures
-    track_b/                # Track B analysis figures
+    track_a/
+    track_b/
   reports/
-    track_a/                # LaTeX report — Track A standalone
-    track_b/                # LaTeX report — Track B standalone
-    merged/                 # LaTeX report — combined two-track submission
+    figures/
+    report.pdf
+    report.tex
+    ...
+
 ```
 
 ---

@@ -5,9 +5,11 @@ For methodology and analysis see [docs/TRACK_A.md](docs/TRACK_A.md) and [docs/TR
 
 ---
 
+
+
 ## Track A — Closed World (no pretrained weights)
 
-**Best result: 44.03% top-1 / 75.37% top-5** on the official 6,745-clip validation set.
+**Best result: 47.85% on Kaggle Private evaluation set leaderboard**
 
 ### Single-model progression
 
