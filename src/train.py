@@ -15,15 +15,16 @@ split; the dedicated ``dataset.val_dir`` is for ``evaluate.py`` only.
 
 from __future__ import annotations
 
-import csv
-import sys
+import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
+from torch.amp import autocast
+from torch.optim.swa_utils import AveragedModel
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -49,7 +50,7 @@ from utils import (
     build_transforms,
     build_weighted_sampler,
     cutmix_data,
-    make_dataset,
+    discover_flip_pairs,
     mixed_loss,
     mixup_data,
     set_seed,
@@ -57,8 +58,18 @@ from utils import (
 )
 
 
-def build_model(cfg: DictConfig) -> nn.Module:
-    """Create the model described by cfg.model.name."""
+def _ema_avg_fn(decay: float):
+    def avg(avg_param: torch.Tensor, model_param: torch.Tensor, num_averaged: int) -> torch.Tensor:
+        return decay * avg_param + (1.0 - decay) * model_param
+    return avg
+
+
+def build_model(cfg: DictConfig, class_names: Optional[List[Optional[str]]] = None) -> nn.Module:
+    """Create the model described by cfg.model.name.
+
+    ``class_names`` (index-ordered list of class folder names) is only used by
+    the ``videomae`` model for head warm-start; pass ``None`` at inference time.
+    """
     name = cfg.model.name
     num_classes = cfg.model.num_classes
     pretrained = cfg.model.pretrained
@@ -200,6 +211,29 @@ def build_model(cfg: DictConfig) -> nn.Module:
             head_dropout=float(cfg.model.get("head_dropout", 0.3)),
             mae_pretrained_path=str(mae_path) if mae_path else None,
         )
+    if name == "videomae":
+        from models.videomae import VideoMAE
+        warm_start = bool(cfg.model.get("warm_start_head_from_ssv2", True))
+        return VideoMAE(
+            num_classes=num_classes,
+            num_frames=int(cfg.model.num_frames),
+            pretrained=pretrained,
+            checkpoint=str(cfg.model.get("checkpoint", VideoMAE.DEFAULT_CHECKPOINT)),
+            gradient_checkpointing=bool(cfg.model.get("gradient_checkpointing", False)),
+            class_names=class_names if warm_start else None,
+        )
+    if name == "vjepa":
+        from models.vjepa import VJEPA2
+        warm_start = bool(cfg.model.get("warm_start_head_from_ssv2", True))
+        return VJEPA2(
+            num_classes=num_classes,
+            num_frames=int(cfg.model.num_frames),
+            pretrained=pretrained,
+            checkpoint=str(cfg.model.get("checkpoint", VJEPA2.DEFAULT_CHECKPOINT)),
+            unfreeze_top_k=int(cfg.model.get("unfreeze_top_k", 0)),
+            gradient_checkpointing=bool(cfg.model.get("gradient_checkpointing", False)),
+            class_names=class_names if warm_start else None,
+        )
     raise ValueError(f"Unknown model.name: {name}")
 
 
@@ -300,10 +334,6 @@ def train_one_epoch(
     device: torch.device,
     mixup_alpha: float = 0.0,
     cutmix_prob: float = 0.0,
-    epoch_desc: str = "Train",
-    scaler: "torch.cuda.amp.GradScaler | None" = None,
-    clip_grad_norm: float = 0.0,
-    ema_model: "nn.Module | None" = None,
 ) -> Tuple[float, float]:
     """Returns (average loss, top-1 accuracy) for one epoch."""
     model.train()
@@ -328,30 +358,18 @@ def train_one_epoch(
         elif use_mixup:
             video_batch, y_a, y_b, lam = mixup_data(video_batch, labels, mixup_alpha)
 
-        with torch.autocast(device_type=device.type, enabled=amp_enabled):
-            logits = model(video_batch)
-            if use_cutmix or use_mixup:
-                loss = mixed_loss(loss_fn, logits, y_a, y_b, lam)
-            else:
-                loss = loss_fn(logits, labels)
+        logits = model(video_batch)
 
         if use_cutmix or use_mixup:
-            correct += int((logits.detach().argmax(1) == y_a).sum().item())
+            loss = mixed_loss(loss_fn, logits, y_a, y_b, lam)
+            # Accuracy tracked against the dominant label
+            correct += int((logits.argmax(1) == y_a).sum().item())
         else:
-            correct += int((logits.detach().argmax(1) == labels).sum().item())
+            loss = loss_fn(logits, labels)
+            correct += int((logits.argmax(1) == labels).sum().item())
 
-        if amp_enabled:
-            scaler.scale(loss).backward()
-            if clip_grad_norm > 0:
-                scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            loss.backward()
-            if clip_grad_norm > 0:
-                nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
-            optimizer.step()
+        loss.backward()
+        optimizer.step()
 
         if ema_model is not None:
             ema_model.update_parameters(model)
@@ -371,8 +389,6 @@ def evaluate_epoch(
     data_loader: DataLoader,
     loss_fn: nn.Module,
     device: torch.device,
-    epoch_desc: str = "Val",
-    amp_enabled: bool = False,
 ) -> Tuple[float, float]:
     """Returns (average loss, top-1 accuracy) on the validation loader."""
     model.eval()
@@ -380,13 +396,11 @@ def evaluate_epoch(
     correct = 0
     total = 0
 
-    pbar = tqdm(data_loader, desc=epoch_desc, leave=False, dynamic_ncols=True)
-    for video_batch, labels in pbar:
-        video_batch = video_batch.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
-        with torch.autocast(device_type=device.type, enabled=amp_enabled):
-            logits = model(video_batch)
-            loss = loss_fn(logits, labels)
+    for video_batch, labels in data_loader:
+        video_batch = video_batch.to(device)
+        labels = labels.to(device)
+        logits = model(video_batch)
+        loss = loss_fn(logits, labels)
 
         running_loss += float(loss.item()) * labels.size(0)
         correct += int((logits.argmax(1) == labels).sum().item())
@@ -472,6 +486,15 @@ def main(cfg: DictConfig) -> None:
     train_dir = Path(cfg.dataset.train_dir).resolve()
     all_samples = collect_video_samples(train_dir)
 
+    # Index-ordered class folder names (e.g. "012_Pouring_something_into_something"),
+    # used for VideoMAE head warm-start. Missing indices stay None.
+    _name_by_idx: Dict[int, str] = {}
+    for _video_dir, _idx in all_samples:
+        _name_by_idx.setdefault(int(_idx), _video_dir.parent.name)
+    class_names: List[Optional[str]] = [
+        _name_by_idx.get(i) for i in range(int(cfg.model.num_classes))
+    ]
+
     max_samples = cfg.dataset.get("max_samples")
     if max_samples is not None:
         all_samples = all_samples[: int(max_samples)]
@@ -480,20 +503,28 @@ def main(cfg: DictConfig) -> None:
         all_samples, val_ratio=float(cfg.dataset.val_ratio), seed=int(cfg.dataset.seed)
     )
 
+    # Optional: merge pseudo-labeled test samples into the *train* pool only
+    # (val_samples stays clean so in-training val_acc remains an honest signal).
+    pseudo_path = cfg.dataset.get("pseudo_labels_path")
+    if pseudo_path:
+        import csv as _csv
+        threshold = float(cfg.dataset.get("pseudo_threshold", 0.85))
+        kept: List[Tuple[Path, int]] = []
+        total = 0
+        with open(str(pseudo_path), newline="", encoding="utf-8") as _f:
+            for row in _csv.DictReader(_f):
+                total += 1
+                if float(row["confidence"]) >= threshold:
+                    kept.append((Path(row["video_path"]), int(row["pseudo_label"])))
+        print(
+            f"Pseudo-labels: kept {len(kept)}/{total} test videos at "
+            f"confidence ≥ {threshold} (from {pseudo_path})."
+        )
+        train_samples = list(train_samples) + kept
+
     use_imagenet_norm = bool(cfg.model.pretrained)
-    image_size = int(cfg.dataset.get("image_size", 224))
-    rand_aug_ops = int(cfg.training.get("rand_augment_ops", 0))
-    rand_aug_mag = float(cfg.training.get("rand_augment_magnitude", 0.5))
-    horizontal_flip = bool(cfg.training.get("horizontal_flip", True))
-    train_transform = build_transforms(
-        image_size=image_size,
-        is_training=True,
-        use_imagenet_norm=use_imagenet_norm,
-        rand_augment_ops=rand_aug_ops,
-        rand_augment_magnitude=rand_aug_mag,
-        horizontal_flip=horizontal_flip,
-    )
-    eval_transform  = build_transforms(image_size=image_size, is_training=False, use_imagenet_norm=use_imagenet_norm)
+    train_transform = build_transforms(is_training=True,  use_imagenet_norm=use_imagenet_norm)
+    eval_transform  = build_transforms(is_training=False, use_imagenet_norm=use_imagenet_norm)
 
     num_frames = int(cfg.dataset.num_frames)
     interp = bool(cfg.dataset.get("interpolate_frames", False))
@@ -551,143 +582,24 @@ def main(cfg: DictConfig) -> None:
     )
 
     model = build_model(cfg).to(device)
-
-    # EMA / SWA flags (models created here; SWALR scheduler created after optimizer below)
-    use_ema = bool(cfg.training.get("ema", False))
-    ema_model = None
-    if use_ema:
-        ema_decay = float(cfg.training.get("ema_decay", 0.9998))
-        ema_model = torch.optim.swa_utils.AveragedModel(
-            model,
-            multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(ema_decay),
-        )
-        print(f"EMA enabled (decay={ema_decay}).")
-
-    use_swa = bool(cfg.training.get("swa", False))
-    swa_model = None
-    swa_lr_val = 0.0
-    swa_start = 0
-    if use_swa:
-        epochs_total = int(cfg.training.epochs)
-        swa_epochs = int(cfg.training.get("swa_epochs", max(1, epochs_total // 4)))
-        swa_start = epochs_total - swa_epochs
-        swa_lr_val = float(cfg.training.get("swa_lr", float(cfg.training.lr) * 0.05))
-        swa_model = torch.optim.swa_utils.AveragedModel(model)
-
-    label_smoothing = float(cfg.training.get("label_smoothing", 0.0))
-    focal_gamma = float(cfg.training.get("focal_gamma", 0.0))
-    if focal_gamma > 0:
-        class _FocalLoss(nn.Module):
-            def __init__(self, gamma: float, smoothing: float) -> None:
-                super().__init__()
-                self.gamma = gamma
-                self._ce = nn.CrossEntropyLoss(label_smoothing=smoothing, reduction="none")
-            def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-                ce = self._ce(logits, labels)
-                return ((1.0 - torch.exp(-ce)) ** self.gamma * ce).mean()
-        loss_fn: nn.Module = _FocalLoss(focal_gamma, label_smoothing)
-        print(f"Using Focal loss (gamma={focal_gamma}, label_smoothing={label_smoothing}).")
-    else:
-        loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-
-    optimizer = build_optimizer(model, cfg)
-    scheduler = build_scheduler(optimizer, cfg)
-
-    swa_scheduler = None
-    if use_swa:
-        swa_scheduler = torch.optim.swa_utils.SWALR(
-            optimizer, swa_lr=swa_lr_val,
-            anneal_epochs=max(1, int(cfg.training.get("swa_epochs", 1)) // 2),
-        )
-        print(f"SWA enabled: starts at epoch {swa_start + 1}, swa_lr={swa_lr_val:.2e}.")
-
-    use_amp = device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
-    if use_amp:
-        print("Mixed precision (AMP) enabled.")
-
-    # --- Resume: load before compile so state_dict has no _orig_mod. prefix ---
-    checkpoint_path = Path(cfg.training.checkpoint_path).resolve()
-    resume_path = checkpoint_path.with_stem(checkpoint_path.stem + "_last")
-    start_epoch = 0
-    best_val_accuracy = 0.0
-    wandb_run_id: Optional[str] = None
-
-    if bool(cfg.training.get("resume", False)) and resume_path.exists():
-        print(f"Resuming from {resume_path}", flush=True)
-        ckpt = torch.load(resume_path, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"])
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        if scheduler is not None and ckpt.get("scheduler_state_dict") is not None:
-            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        scaler.load_state_dict(ckpt["scaler_state_dict"])
-        start_epoch = int(ckpt["epoch"])
-        best_val_accuracy = float(ckpt["best_val_accuracy"])
-        wandb_run_id = ckpt.get("wandb_run_id")
-        print(f"  Resumed at epoch {start_epoch}, best_val_acc={best_val_accuracy:.4f}")
-
-    # Compile after resume so loaded weights go into the uncompiled module
-    compile_enabled = bool(cfg.training.get("compile", False)) and device.type == "cuda"
-    if compile_enabled:
-        compile_mode = str(cfg.training.get("compile_mode", "default"))
-        print(f"torch.compile enabled (mode={compile_mode}).", flush=True)
-        model = torch.compile(model, mode=compile_mode)
-
-    wandb_run = _init_wandb(cfg, resume_run_id=wandb_run_id)
+    loss_fn  = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.training.lr))
 
     mixup_alpha = float(cfg.training.get("mixup_alpha", 0.0))
     cutmix_prob = float(cfg.training.get("cutmix_prob", 0.0))
-    clip_grad_norm = float(cfg.training.get("clip_grad_norm", 0.0))
-    reg_warmup_epochs = int(cfg.training.get("reg_warmup_epochs", 0))
-    if reg_warmup_epochs > 0 and (mixup_alpha > 0 or cutmix_prob > 0):
-        print(
-            f"Regularization warmup: MixUp/CutMix disabled for the first "
-            f"{reg_warmup_epochs} epochs, then enabled at full strength "
-            f"(mixup_alpha={mixup_alpha}, cutmix_prob={cutmix_prob})."
-        )
 
-    log_path = checkpoint_path.with_suffix(".csv")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_mode = "a" if start_epoch > 0 else "w"
-    log_file = open(log_path, log_mode, newline="", buffering=1)
-    log_writer = csv.writer(log_file)
-    if start_epoch == 0:
-        log_writer.writerow(["epoch", "lr", "train_loss", "train_acc", "val_loss", "val_acc", "best_val_acc"])
-    print(f"Logging metrics to {log_path}", flush=True)
+    best_val_accuracy = 0.0
+    checkpoint_path = Path(cfg.training.checkpoint_path).resolve()
 
-    epochs = int(cfg.training.epochs)
-    for epoch in tqdm(range(start_epoch, epochs), desc="Epochs", dynamic_ncols=True):
-        in_reg_warmup = epoch < reg_warmup_epochs
-        cur_mixup = 0.0 if in_reg_warmup else mixup_alpha
-        cur_cutmix = 0.0 if in_reg_warmup else cutmix_prob
-        in_swa_phase = use_swa and epoch >= swa_start
+    for epoch in range(int(cfg.training.epochs)):
         train_loss, train_acc = train_one_epoch(
             model, train_loader, loss_fn, optimizer, device,
-            mixup_alpha=cur_mixup, cutmix_prob=cur_cutmix,
-            epoch_desc=f"Train {epoch + 1}/{epochs}",
-            scaler=scaler if use_amp else None,
-            clip_grad_norm=clip_grad_norm,
-            ema_model=ema_model,
+            mixup_alpha=mixup_alpha, cutmix_prob=cutmix_prob,
         )
+        val_loss, val_acc = evaluate_epoch(model, val_loader, loss_fn, device)
 
-        # SWA: collect model weights once per epoch during the SWA phase
-        if in_swa_phase:
-            swa_model.update_parameters(model)
-            swa_scheduler.step()
-        elif scheduler is not None:
-            scheduler.step()
-
-        # Choose evaluation model: EMA preferred over raw model for val accuracy
-        eval_model = ema_model if (ema_model is not None) else model
-        val_loss, val_acc = evaluate_epoch(
-            eval_model, val_loader, loss_fn, device,
-            epoch_desc=f"Val {epoch + 1}/{epochs}",
-            amp_enabled=use_amp,
-        )
-
-        current_lr = optimizer.param_groups[0]["lr"]
         print(
-            f"Epoch {epoch + 1}/{cfg.training.epochs} | lr {current_lr:.2e} | "
+            f"Epoch {epoch + 1}/{cfg.training.epochs} | "
             f"train loss {train_loss:.4f} acc {train_acc:.4f} | "
             f"val loss {val_loss:.4f} acc {val_acc:.4f}",
             flush=True,
@@ -708,9 +620,8 @@ def main(cfg: DictConfig) -> None:
 
         if val_acc > best_val_accuracy:
             best_val_accuracy = val_acc
-            uncompiled_model = getattr(model, "_orig_mod", model)
             payload: Dict[str, Any] = {
-                "model_state_dict": uncompiled_model.state_dict(),
+                "model_state_dict": model.state_dict(),
                 "model_name": cfg.model.name,
                 "num_classes": int(cfg.model.num_classes),
                 "pretrained": bool(cfg.model.pretrained),
@@ -720,43 +631,12 @@ def main(cfg: DictConfig) -> None:
             }
             if cfg.model.name == "cnn_lstm":
                 payload["lstm_hidden_size"] = int(cfg.model.get("lstm_hidden_size", 512))
+
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(payload, checkpoint_path)
             print(f"  Saved new best model to {checkpoint_path} (val acc={val_acc:.4f})")
 
-        _save_resume_ckpt(
-            resume_path, model, optimizer, scheduler, scaler,
-            epoch, best_val_accuracy, num_frames, cfg,
-            wandb_run_id=wandb_run.id if wandb_run is not None else None,
-        )
-
-    # SWA post-training: update batch norm stats and evaluate averaged model
-    if use_swa and swa_model is not None:
-        print("Updating SWA batch-norm statistics...", flush=True)
-        torch.optim.swa_utils.update_bn(train_loader, swa_model, device=device)
-        swa_loss, swa_acc = evaluate_epoch(
-            swa_model, val_loader, loss_fn, device, epoch_desc="SWA Val", amp_enabled=use_amp
-        )
-        print(f"SWA val acc={swa_acc:.4f} (best so far={best_val_accuracy:.4f})", flush=True)
-        if swa_acc > best_val_accuracy:
-            best_val_accuracy = swa_acc
-            uncompiled_swa = getattr(swa_model, "_orig_mod", swa_model)
-            payload = {
-                "model_state_dict": uncompiled_swa.state_dict(),
-                "model_name": cfg.model.name,
-                "num_classes": int(cfg.model.num_classes),
-                "pretrained": bool(cfg.model.pretrained),
-                "num_frames": num_frames,
-                "val_accuracy": swa_acc,
-                "config": OmegaConf.to_container(cfg, resolve=True),
-            }
-            torch.save(payload, checkpoint_path)
-            print(f"  SWA checkpoint saved (val acc={swa_acc:.4f})")
-
-    log_file.close()
-    if wandb_run is not None:
-        wandb_run.finish()
-    print(f"Done. Best validation accuracy: {best_val_accuracy:.4f}", flush=True)
+    print(f"Done. Best validation accuracy: {best_val_accuracy:.4f}")
 
 
 if __name__ == "__main__":

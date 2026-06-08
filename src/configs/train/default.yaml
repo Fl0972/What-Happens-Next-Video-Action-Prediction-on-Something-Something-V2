@@ -4,7 +4,9 @@
 # weight_decay, longer epochs, etc.).
 training:
   batch_size: 8
-  lr: 0.0001
+  lr: 0.0001        # initial/base LR (used as min_lr by OneCycleLR)
+  max_lr: 0.001     # peak LR for cosine schedule with warmup
+  weight_decay: 0.05
   epochs: 25
   num_workers: 8
   # Where to save the best checkpoint (by validation accuracy)
@@ -24,6 +26,30 @@ training:
   cutmix_prob: 0.5             # P(CutMix instead of MixUp) per batch
   rand_augment_ops: 0          # 0 disables RandAugment-style ops
   rand_augment_magnitude: 0.5  # magnitude in [0, 1]
+
+  # Mixed-precision
+  amp: true                    # Mixed-precision (autocast) on CUDA — also used at inference
+  amp_dtype: bfloat16          # 'bfloat16' (Ada/Ampere) or 'float16'
+
+  # Inference / multi-view
+  eval_view_chunk: 4           # views processed per forward pass (caps GPU mem)
+
+  # EMA / snapshot ensemble
+  ema_decay: 0.999             # EMA of weights; set to 0.0 to disable
+  top_k_checkpoints: 3         # save top-K checkpoints by val acc
+  ensemble_top_k: 3            # at inference, ensemble this many top-K snapshots
+  checkpoint_paths: null       # explicit list overrides ensemble_top_k when set
+  init_weights_from: null      # warm-start from checkpoint (staged finetuning)
+
+  # Ensemble post-processing (ensemble_per_class.py / ensemble_gradient.py)
+  class_weight_temperature: 0.10
+  softmax_cache_dir: null
+  grad_weight_mode: global     # 'global' or 'per_class'
+  grad_steps: 300
+  grad_lr: 0.05
+  grad_l2_uniform: 0.001
+  grad_holdout_frac: 0.0
+  skip_submission: false
 
   # Resuming interrupted runs
   resume: false                # set true to resume from {checkpoint}_last.pt

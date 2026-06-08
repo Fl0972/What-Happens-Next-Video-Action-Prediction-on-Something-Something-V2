@@ -24,11 +24,37 @@ from typing import Any, Dict, List, Tuple
 import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
+from torch.amp import autocast
 from torch.utils.data import DataLoader
 
 from dataset.video_dataset import VideoFrameDataset, _list_frame_paths
 from train import build_model
-from utils import build_transforms, set_seed
+from utils import build_flip_perm, build_transforms, set_seed
+
+
+def _multi_view_logits(
+    model: torch.nn.Module,
+    video_batch: torch.Tensor,
+    max_views_per_step: int,
+    flip_perm: torch.Tensor | None = None,
+    spatial_tta: bool = False,
+) -> torch.Tensor:
+    """video_batch: (B, N, T, C, H, W) -> logits: (B, num_classes), chunked.
+
+    See ``evaluate.py`` for ``flip_perm`` semantics: when spatial TTA is on,
+    every odd-indexed view is the hflipped one; its logits are reindexed by
+    ``flip_perm`` so direction-encoded mirror classes stay consistent.
+    """
+    B, N, T, C, H, W = video_batch.shape
+    flat = video_batch.reshape(B * N, T, C, H, W)
+    out_chunks = []
+    for s in range(0, B * N, max(1, max_views_per_step)):
+        out_chunks.append(model(flat[s : s + max_views_per_step]))
+    out = torch.cat(out_chunks, dim=0).view(B, N, -1)
+    if flip_perm is not None and spatial_tta:
+        flip_idx = torch.arange(1, N, 2, device=out.device)
+        out[:, flip_idx, :] = out[:, flip_idx, :].index_select(2, flip_perm.to(out.device))
+    return out.mean(dim=1)
 
 
 def load_manifest_video_names(manifest_path: Path) -> List[str]:
@@ -119,36 +145,42 @@ def build_model_from_checkpoint(ckpt: Dict[str, Any]) -> torch.nn.Module:
 
 
 @torch.no_grad()
-def run_inference(
+def run_inference_logits(
     model: torch.nn.Module,
     loader: DataLoader,
     device: torch.device,
     total_videos: int,
-    tta: bool = False,
-) -> List[int]:
-    """Run the model on the loader; print batch progress to stdout.
+    multi_view: bool = False,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
+    eval_view_chunk: int = 4,
+    flip_perm: torch.Tensor | None = None,
+    spatial_tta: bool = False,
+) -> torch.Tensor:
+    """Run the model on the loader; return softmax probabilities (N, num_classes).
 
-    When tta=True each item from the loader is (B, 10, T, C, H, W) —
-    10 crops produced by VideoTransform.tta(). Logits are averaged across crops.
+    When multi_view=True each item is (B, N_views, T, C, H, W) and logits are
+    averaged across views (covers spatial 10-crop, multi-clip temporal, or both).
+    Views are processed in chunks of ``eval_view_chunk`` to avoid OOM.
     """
     model.eval()
-    preds: List[int] = []
     n_batches = len(loader)
     log_interval = max(1, n_batches // 10)
     processed = 0
+    all_probs: List[torch.Tensor] = []
     for batch_idx, (video_batch, _labels) in enumerate(loader, start=1):
         video_batch = video_batch.to(device)
 
-        if tta:
-            # video_batch: (B, N_crops, T, C, H, W)
-            B, N, T, C, H, W = video_batch.shape
-            logits = model(video_batch.view(B * N, T, C, H, W))   # (B*N, num_classes)
-            logits = logits.view(B, N, -1).mean(dim=1)             # (B, num_classes)
-        else:
-            logits = model(video_batch)
+        with autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+            if multi_view:
+                logits = _multi_view_logits(
+                    model, video_batch, eval_view_chunk,
+                    flip_perm=flip_perm, spatial_tta=spatial_tta,
+                )
+            else:
+                logits = model(video_batch)
 
-        batch_pred = logits.argmax(dim=1).cpu().tolist()
-        preds.extend(int(p) for p in batch_pred)
+        all_probs.append(logits.float().softmax(dim=1).cpu())
         bs = video_batch.size(0)
         processed += bs
         if batch_idx % log_interval == 0 or batch_idx == n_batches:
@@ -157,7 +189,45 @@ def run_inference(
                 f"({processed}/{total_videos} clips)",
                 flush=True,
             )
-    return preds
+    return torch.cat(all_probs, dim=0)
+
+
+def run_inference(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    total_videos: int,
+    tta: bool = False,
+) -> List[int]:
+    """Backwards-compatible wrapper that returns argmax predictions."""
+    probs = run_inference_logits(model, loader, device, total_videos, multi_view=tta)
+    return probs.argmax(dim=1).tolist()
+
+
+def _resolve_checkpoint_paths(cfg: DictConfig) -> List[Path]:
+    """
+    Returns the list of checkpoint paths to ensemble.
+
+    - If ``training.checkpoint_paths`` is set (list), use it.
+    - Else if ``training.ensemble_top_k`` > 1, derive ``<base>_top1.pt`` ... files
+      from ``training.checkpoint_path``.
+    - Else, use the single ``training.checkpoint_path``.
+    """
+    explicit = cfg.training.get("checkpoint_paths")
+    if explicit:
+        return [Path(str(p)).resolve() for p in explicit]
+
+    base = Path(cfg.training.checkpoint_path)
+    top_k = int(cfg.training.get("ensemble_top_k", 1))
+    if top_k > 1:
+        candidates = [
+            base.with_name(f"{base.stem}_top{i}{base.suffix}").resolve()
+            for i in range(1, top_k + 1)
+        ]
+        existing = [p for p in candidates if p.is_file()]
+        if existing:
+            return existing
+    return [base.resolve()]
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -172,24 +242,20 @@ def main(cfg: DictConfig) -> None:
         device_str = "cpu"
     device = torch.device(device_str)
 
-    checkpoint_path = Path(cfg.training.checkpoint_path).resolve()
-    if not checkpoint_path.is_file():
-        raise SystemExit(f"Checkpoint not found: {checkpoint_path}")
+    checkpoint_paths = _resolve_checkpoint_paths(cfg)
+    missing = [p for p in checkpoint_paths if not p.is_file()]
+    if missing:
+        raise SystemExit(f"Checkpoint(s) not found: {missing}")
+    print(f"Ensembling {len(checkpoint_paths)} checkpoint(s):", flush=True)
+    for p in checkpoint_paths:
+        print(f"  - {p}", flush=True)
 
-    print(f"Loading checkpoint: {checkpoint_path}", flush=True)
-    ckpt: Dict[str, Any] = torch.load(checkpoint_path, map_location="cpu")
-    model = build_model_from_checkpoint(ckpt)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.to(device)
-    print(f"Model on device: {device}", flush=True)
-
-    num_frames = int(ckpt.get("num_frames", cfg.dataset.num_frames))
-    pretrained = bool(ckpt.get("pretrained", cfg.model.pretrained))
-    ckpt_cfg = OmegaConf.create(ckpt["config"]) if "config" in ckpt else cfg
-    interp = bool(ckpt_cfg.dataset.get("interpolate_frames", False))
-    if interp:
-        print(f"Frame interpolation enabled: {num_frames} → {num_frames * 2} frames.", flush=True)
-    eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained)
+    # Load the first checkpoint to derive num_frames / pretrained / num_classes
+    first_ckpt: Dict[str, Any] = torch.load(checkpoint_paths[0], map_location="cpu")
+    num_frames = int(first_ckpt.get("num_frames", cfg.dataset.num_frames))
+    pretrained = bool(first_ckpt.get("pretrained", cfg.model.pretrained))
+    image_size = int(first_ckpt.get("image_size", cfg.dataset.get("image_size", 224)))
+    eval_transform = build_transforms(image_size=image_size, is_training=False, use_imagenet_norm=pretrained)
 
     test_root = Path(cfg.dataset.test_dir).resolve()
     output_path = Path(cfg.dataset.submission_output).resolve()
@@ -234,8 +300,15 @@ def main(cfg: DictConfig) -> None:
     sample_list: List[Tuple[Path, int]] = [(p, 0) for p in valid_dirs]
 
     use_tta = bool(cfg.dataset.get("tta", False))
-    if use_tta:
-        print("TTA enabled: averaging over 10 crops (5 positions × 2 flips).", flush=True)
+    n_clips = max(1, int(cfg.dataset.get("n_clips", 1)))
+    n_views = (10 if use_tta else 1) * n_clips
+    multi_view = n_views > 1
+    if multi_view:
+        print(
+            f"TTA enabled: {n_views} views/video "
+            f"({n_clips} temporal clip(s) × {10 if use_tta else 1} spatial crop(s)).",
+            flush=True,
+        )
 
     dataset = VideoFrameDataset(
         root_dir=test_root,
@@ -243,7 +316,7 @@ def main(cfg: DictConfig) -> None:
         transform=eval_transform,
         sample_list=sample_list,
         tta=use_tta,
-        interpolate_frames=interp,
+        n_clips=n_clips,
     )
     batch_size = int(cfg.training.batch_size)
     loader = DataLoader(
@@ -259,7 +332,50 @@ def main(cfg: DictConfig) -> None:
         f"{len(loader)} batches",
         flush=True,
     )
-    predictions = run_inference(model, loader, device, total_videos=len(dataset), tta=use_tta)
+
+    # The model is (re)built per checkpoint from that checkpoint's own stored
+    # config inside the loop. We must NOT switch on model_name: VideoMAE Base
+    # and Large both save model_name="videomae", so a model_name-keyed switch
+    # would load Large weights into a Base graph (or vice versa) and crash with
+    # a size mismatch when ensembling across backbones.
+    model = None
+    print(f"Device: {device}", flush=True)
+
+    use_amp = bool(cfg.training.get("amp", True)) and device.type == "cuda"
+    amp_dtype_str = str(cfg.training.get("amp_dtype", "bfloat16")).lower()
+    amp_dtype = torch.bfloat16 if amp_dtype_str == "bfloat16" else torch.float16
+    eval_view_chunk = max(1, int(cfg.training.get("eval_view_chunk", 4)))
+    if multi_view:
+        print(f"View chunk size: {eval_view_chunk}", flush=True)
+
+    # Label-aware TTA: when the saved checkpoint declares mirror flip pairs,
+    # rebuild the class-permutation tensor used to remap flipped TTA views.
+    flip_pairs_dict = first_ckpt.get("flip_pairs") or {}
+    flip_pairs_dict = {int(k): int(v) for k, v in flip_pairs_dict.items()}
+    flip_perm = (
+        build_flip_perm(int(first_ckpt.get("num_classes", cfg.model.num_classes)), flip_pairs_dict).to(device)
+        if (use_tta and flip_pairs_dict)
+        else None
+    )
+    if flip_perm is not None:
+        print(f"Label-aware TTA: remapping {len(flip_pairs_dict)} class indices on flipped views.", flush=True)
+
+    summed_probs: torch.Tensor | None = None
+    for i, ckpt_path in enumerate(checkpoint_paths, start=1):
+        print(f"[{i}/{len(checkpoint_paths)}] Loading {ckpt_path.name}", flush=True)
+        ckpt = first_ckpt if i == 1 else torch.load(ckpt_path, map_location="cpu")
+        model = build_model_from_checkpoint(ckpt).to(device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        probs = run_inference_logits(
+            model, loader, device, total_videos=len(dataset),
+            multi_view=multi_view, use_amp=use_amp, amp_dtype=amp_dtype,
+            eval_view_chunk=eval_view_chunk,
+            flip_perm=flip_perm, spatial_tta=use_tta,
+        )
+        summed_probs = probs if summed_probs is None else summed_probs + probs
+
+    assert summed_probs is not None
+    predictions = summed_probs.argmax(dim=1).tolist()
     print("Inference finished.", flush=True)
 
     if len(predictions) != len(valid_names):

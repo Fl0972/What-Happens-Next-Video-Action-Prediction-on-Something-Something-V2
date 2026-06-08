@@ -1,151 +1,165 @@
-# Video classification challenge
+# What Happens Next? — Video Action Recognition
 
-This repository contains the codebase for the CSC_43M04_EP - Modal d'informatique - Deep Learning in Computer Vision Challenge "What_Happens_Next?" 
+**CSC_43M04_EP — Modal d'informatique, École Polytechnique (2026)**  
+**Team 8 — Florian Guillaumey & Andrea Signoretti**
 
-The codebase allows to train a **video classifier** on folders of extracted frames. Each video is a directory of JPG frames; the model sees a fixed number of frames per clip and predicts one class among 33 action categories.
+Temporal action prediction on a 33-class subset of Something-Something V2 (SSv2).
+Each clip is represented as **four JPEG frames** covering the first ~40% of the original video;
+the model must predict the action outcome from motion onset alone.
 
-## Getting the data
+---
 
-1. Download the prepared dataset from Google Drive: [frames.zip](https://drive.google.com/file/d/1SlRJBD6cyXMr5772kOKe5xXAU9Scu5vR/view?usp=sharing).
-2. Unzip it so that you have a `processed_data` folder at the **root of this project** (next to `src/`), with at least:
-   - `processed_data/train/` — class subfolders, each containing `video_<id>/frame_*.jpg`
-   - `processed_data/val/` — same layout for validation
-   - `processed_data/test/` — video subfolders, used for submission 
-   The exact subfolder names under `processed_data` must match what you set in the Hydra config (see below). The default configuration expects paths like `processed_data/train`, `processed_data/val`, and `processed_data/test` (see `src/configs/data/default.yaml`).
+## Tracks
 
-If your zip uses a different folder name than `val2`, either rename it or override the paths on the command line (examples below).
+| Track | Constraint | Best result | Details |
+|---|---|---|---|
+| **A — Closed World** | Train from scratch, no pretrained weights | **44.03% top-1 / 75.37% top-5** (val-dir) | [docs/TRACK_A.md](docs/TRACK_A.md) |
+| **B — Open World** | External data and pretrained models allowed | **0.6586 Kaggle top-1** (16th overall) | [docs/TRACK_B.md](docs/TRACK_B.md) |
+
+A digest of all results across both tracks is in [RESULTS.md](RESULTS.md).  
+The full academic reports are in [docs/reports/](docs/reports/).
+
+---
+
+## Repository Layout
+
+```
+src/                        # All Python source code
+  train.py                  # Main training entry point (Hydra)
+  evaluate.py               # Evaluation on full val set
+  create_submission.py      # Generate Kaggle submission CSV
+  train_kfold.py            # K-fold / rotating-fold training
+  models/                   # Model architectures
+    tsm_resnet.py           # TSM-ResNet (Track A best single model)
+    trackA_video_former_lite.py  # VideoFormer-Lite (Track A)
+    trackA_r2plus1d.py      # R(2+1)D (Track A closed-track)
+    videomae.py             # VideoMAE wrapper (Track B)
+    vjepa.py                # V-JEPA 2 wrapper (Track B)
+    ...
+  dataset/
+    video_dataset.py        # VideoFrameDataset, TSN jitter, multi-clip TTA
+    lmdb_dataset.py         # Optional LMDB-backed dataset
+  configs/                  # Hydra YAML configs
+    experiment/             # Per-experiment presets (recommended entry point)
+    model/                  # Model-specific configs
+    train/                  # Training recipe defaults
+  honest_ensemble.py        # Cross-preprocessing uniform ensemble (Track B)
+  ensemble_gradient.py      # Learned-weight gradient ensemble
+  ensemble_per_class.py     # Per-class accuracy-weighted ensemble
+  cache_test_softmax.py     # Cache softmax outputs for ensemble
+  pseudo_label.py           # Pseudo-labelling pipeline (Track B)
+  extract_ssv2_frames.py    # Window-capped source-frame re-extraction (Track B)
+scripts/                    # Training and ablation shell scripts
+submissions/                # All Kaggle submission CSVs
+models/                     # Val-accuracy CSVs for every training run
+logs/                       # Done-markers for reboot-resilient pipeline
+docs/
+  TRACK_A.md                # Track A: method, experiments, ablations, results
+  TRACK_B.md                # Track B: method, integrity story, results
+  figures/
+    track_a/                # Track A analysis figures
+    track_b/                # Track B analysis figures
+  reports/
+    track_a/                # LaTeX report — Track A standalone
+    track_b/                # LaTeX report — Track B standalone
+    merged/                 # LaTeX report — combined two-track submission
+```
+
+---
+
+## Dataset
+
+1. Download the prepared dataset from Google Drive: [frames.zip](https://drive.google.com/file/d/1SlRJBD6cyXMr5772kOKe5xXAU9Scu5vR/view?usp=sharing)
+2. Unzip so that `processed_data/` sits at the repository root, containing:
+   - `processed_data/train/` — class subfolders `000_ClassName/video_<id>/frame_*.jpg`
+   - `processed_data/val/` — same layout
+   - `processed_data/test/` — video folders without class prefix
+
+---
 
 ## Environment
 
-Use Python 3.10+ and `uv`:
+Python 3.10+, managed with `uv`:
 
 ```bash
 uv sync
 ```
 
-Run training and evaluation from the **`src/`** directory so Hydra finds `configs/`:
+All training and evaluation commands must be run from `src/` so Hydra resolves `configs/`:
 
 ```bash
 cd src
 ```
 
-Or from the repo root:
+---
+
+## Quick Start — Track A (Closed World)
 
 ```bash
-python src/train.py experiment=cnn_lstm
+cd src
+
+# Train the best single model (TSM-ResNet18, T=4, focal loss, rotating folds)
+python train.py experiment=trackA_tsm_ultra_v2_rotating
+
+# Evaluate on full val set
+python evaluate.py training.checkpoint_path=../models/tsm_ultra_v2_rotating.pt
+
+# Generate a submission CSV
+python create_submission.py training.checkpoint_path=../models/tsm_ultra_v2_rotating.pt
+
+# Reproduce the best ensemble (log-softmax avg of 3 models)
+# First generate val logits for each checkpoint, then:
+python ensemble_benchmark.py
 ```
 
-## How the code is organized
+Experiment configs for Track A live in `src/configs/experiment/trackA_*.yaml`.
 
-| Piece | Role |
-|--------|------|
-| `dataset/video_dataset.py` | Loads `T` frames per video folder, applies image transforms, returns tensors `(batch, time, channels, height, width)` and integer labels. |
-| `models/` | Neural networks: each model maps a batch of shape `(B, T, C, H, W)` to logits `(B, num_classes)`. |
-| `utils.py` | Image transforms, train/val split helper, seeds. |
-| `train.py` | Training loop; saves the best checkpoint by validation accuracy (full Hydra config + weights). |
-| `evaluate.py` | Rebuilds the model from the checkpoint config and reports **top-1** and **top-5** on the **full** validation directory (`dataset.val_dir`). |
-| `create_submission.py` | Loads a checkpoint, runs inference on the test split, writes `video_name,predicted_class`. |
-| `configs/` | [Hydra](https://hydra.cc/) YAML: **`experiment/`** (choose a preset), **`model/`**, **`data/`**, **`train/`**. |
+---
 
-The main composition file is `configs/config.yaml`. Global values such as `num_classes: 33` apply across model configs.
+## Quick Start — Track B (Open World)
 
-### Experiments (recommended way to train)
-
-An **experiment** selects which model and other settings (learning rate, optimizer, data augmentation) to use without editing Python. Defaults live in `configs/experiment/`:
-
-- `baseline_from_scratch` — ResNet18 backbone, average pooling over time (closed-track, trained from scratch)
-
-Run:
+Track B requires HuggingFace checkpoints (~1–3 GB each). Set `HF_HOME` to a
+location with sufficient disk space before running.
 
 ```bash
-python src/train.py experiment=baseline_from_scratch
+cd src
+
+# Fine-tune V-JEPA 2 (three-stage progressive unfreezing)
+bash run_vjepa_ft.sh
+
+# Cache softmax outputs for ensemble
+python cache_test_softmax.py training.checkpoint_path=../models/vjepa_ft_s2.pt
+
+# Build the honest ensemble from cached softmax tensors
+python honest_ensemble.py
+
+# Generate the ensemble submission CSV
+python create_submission.py  # uses ensemble_honest_v*.csv internally
 ```
 
-This sets the active `model` group (via Hydra `override /model: ...`). You can still override any field:
+For the full reproducible pipeline with reboot-resilience, see `src/run_ovn2.sh`.
 
-```bash
-python train.py experiment=baseline_from_scratch model.pretrained=false dataset.train_dir=/path/to/train
-python train.py training.epochs=10 training.batch_size=16 training.lr=0.0001
+---
+
+## Adding a New Model
+
+1. Implement `torch.nn.Module` in `src/models/your_model.py` — input `(B, T, C, H, W)`, output `(B, num_classes)`.
+2. Register it in `build_model()` in `src/train.py`.
+3. Add `src/configs/model/your_model.yaml` (use `# @package _global_` header).
+4. Add `src/configs/experiment/your_experiment.yaml` that overrides `/model: your_model`.
+5. Train: `python train.py experiment=your_experiment`
+
+`evaluate.py` and `create_submission.py` need no changes — they reconstruct the model entirely from the saved checkpoint config.
+
+---
+
+## Citing
+
+If you build on this work, please cite the challenge report:
+
 ```
-
-The best checkpoint is written to **`training.checkpoint_path`** (see printed path). It always stores the **full merged Hydra config**, so evaluation and submission reload the same architecture automatically.
-
-Hydra may create an `outputs/` folder with logs for each run.
-
-## Evaluation
-
-Evaluation uses the **entire** validation set under **`dataset.val_dir`** (no random split). The checkpoint must have been produced by the current `train.py` (it needs the saved `config` inside the `.pt` file).
-
-```bash
-python evaluate.py training.checkpoint_path=best_model.pt
+Florian Guillaumey and Andrea Signoretti.
+"What Happens Next? Closed- and Open-World Video Action Recognition
+on a 33-Class Something-Something V2 Subset."
+CSC_43M04_EP — Modal d'informatique, École Polytechnique, 2026.
 ```
-
-```bash
-python evaluate.py training.checkpoint_path=/path/to/ckpt.pt dataset.val_dir=/path/to/val
-```
-
-## Creating a submission file
-
-Reads test frames from **`dataset.test_dir`**, clip order from **`dataset.test_manifest`**, writes **`dataset.submission_output`**.
-
-```bash
-python create_submission.py training.checkpoint_path=best_model.pt
-```
-
-```bash
-python create_submission.py \
-  training.checkpoint_path=best_model.pt \
-  dataset.submission_output=../my_submission.csv
-```
-
-CSV format:
-
-```text
-video_name,predicted_class
-video_12345,7
-```
-
-## Adding a new model
-
-1. **Implement** `torch.nn.Module` in `src/models/your_model.py`.  
-   - **Input:** `(B, T, C, H, W)`  
-   - **Output:** logits `(B, num_classes)`.
-
-2. **Register once** in `train.py` inside `build_model()`: add a branch for `cfg.model.name == "your_model_name"` and return your module.
-
-3. **Add** `src/configs/model/your_model.yaml`:
-
-   ```yaml
-   # @package _global_
-   model:
-     name: your_model_name
-     pretrained: true
-     num_classes: ${num_classes}
-     # your hyperparameters
-   ```
-
-4. **Add an experiment** `src/configs/experiment/your_experiment.yaml` that points Hydra at that model:
-
-   ```yaml
-   # @package _global_
-   defaults:
-     - override /model: your_model
-   ```
-
-   Optionally add more `defaults` lines or same-level keys to override data or training for that experiment only.
-
-5. **Train**:
-
-   ```bash
-   python train.py experiment=your_experiment
-   ```
-
-`evaluate.py` and `create_submission.py` do **not** need edits: they call `build_model` with the config saved in your checkpoint.
-
-## Tips
-
-- Set `training.device=cuda` when a GPU is available; use `cpu` otherwise.
-- Keep `num_classes` in `configs/config.yaml` aligned with the dataset (default **33**).
-- `dataset.seed` controls the internal train/val split during training only.
-
-If something fails, check that `processed_data` paths in `configs/data/default.yaml` (or your CLI overrides) match the folder you downloaded.

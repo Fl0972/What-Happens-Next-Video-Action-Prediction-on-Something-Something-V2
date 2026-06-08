@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+import re
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -55,13 +56,66 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def build_flip_perm(num_classes: int, flip_pairs: Dict[int, int]) -> torch.Tensor:
+    """Build the class-axis permutation tensor used at inference TTA.
+
+    For a flipped view, ``corrected[c] = raw[perm[c]]`` — so
+    ``perm[i] = flip_pairs[i]`` when ``i`` is in a mirror pair, else ``i``.
+    """
+    perm = list(range(num_classes))
+    for src, dst in flip_pairs.items():
+        perm[int(src)] = int(dst)
+    return torch.tensor(perm, dtype=torch.long)
+
+
+def discover_flip_pairs(class_names: List[Optional[str]]) -> Dict[int, int]:
+    """Find ``"…_left_to_right"`` ↔ ``"…_right_to_left"`` class pairs.
+
+    Returns a bidirectional ``{i_l2r: i_r2l, i_r2l: i_l2r}`` mapping. SSv2 has
+    exactly one such pair (``Pulling [something] from left/right to …``) but
+    the helper is generic — it would catch any future left/right action pairs.
+    """
+    norm_to_idx: Dict[str, int] = {}
+    for i, name in enumerate(class_names):
+        if not name:
+            continue
+        n = re.sub(r"^\d+_", "", name).lower()
+        norm_to_idx[n] = i
+
+    pairs: Dict[int, int] = {}
+    for n, i in norm_to_idx.items():
+        if "from_left_to_right" in n:
+            mirror = n.replace("from_left_to_right", "from_right_to_left")
+            j = norm_to_idx.get(mirror)
+            if j is not None:
+                pairs[i] = j
+                pairs[j] = i
+    return pairs
+
+
 class VideoTransform:
     """
     Temporally-consistent augmentation: random parameters are sampled once per
     video and applied identically to every frame.
 
-    transform(frames: List[PIL.Image]) -> Tensor (T, C, H, W)
-    transform.tta(frames)             -> Tensor (10, T, C, H, W)  [5 crops × 2 flips]
+    Calling forms (training)::
+
+        transform(frames)                  -> Tensor (T, C, H, W)
+        transform(frames, label=y)         -> (Tensor (T, C, H, W), label)
+
+    The two-arg form additionally remaps ``label`` for direction-encoded
+    classes whenever a horizontal flip is applied (SSv2 left/right pairs):
+    if ``flip_pairs[label]`` exists and the clip is flipped, the returned
+    label is ``flip_pairs[label]``.
+
+    TTA::
+
+        transform.tta(frames)              -> Tensor (10, T, C, H, W)
+                                              [5 spatial crops × 2 (orig + hflip)]
+
+    The flipped views' logits should be remapped at inference using the
+    same ``flip_pairs`` mapping (handled in ``evaluate.py`` /
+    ``create_submission.py``).
     """
 
     def __init__(
@@ -72,12 +126,14 @@ class VideoTransform:
         rand_augment_ops: int = 0,
         rand_augment_magnitude: float = 0.5,
         horizontal_flip: bool = True,
+        flip_pairs: Optional[Dict[int, int]] = None,
     ) -> None:
         self.image_size = image_size
         self.is_training = is_training
         self.rand_augment_ops = int(rand_augment_ops)
         self.rand_augment_magnitude = float(rand_augment_magnitude)
         self.horizontal_flip = bool(horizontal_flip)
+        self.flip_pairs: Dict[int, int] = dict(flip_pairs) if flip_pairs else {}
         if use_imagenet_norm:
             self.mean = [0.485, 0.456, 0.406]
             self.std = [0.229, 0.224, 0.225]
@@ -85,7 +141,11 @@ class VideoTransform:
             self.mean = [0.5, 0.5, 0.5]
             self.std = [0.5, 0.5, 0.5]
 
-    def __call__(self, frames: List[Image.Image]) -> torch.Tensor:
+    def __call__(
+        self,
+        frames: List[Image.Image],
+        label: Optional[int] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, int]]:
         if self.is_training:
             # All random params sampled once — same for every frame in the clip
             i, j, h, w = self._crop_params(frames[0])
@@ -134,7 +194,15 @@ class VideoTransform:
         if self.is_training and do_erase:
             video = self._random_erase(video)
 
-        return video
+        # Label-aware horizontal flip: when we flipped a direction-encoded
+        # clip (e.g. SSv2 "left to right") the visual content now matches the
+        # mirror class, so we swap the label too.
+        if label is not None and self.is_training and do_flip and label in self.flip_pairs:
+            label = self.flip_pairs[label]
+
+        if label is None:
+            return video
+        return video, label
 
     def tta(self, frames: List[Image.Image]) -> torch.Tensor:
         """
@@ -200,6 +268,7 @@ def build_transforms(
     rand_augment_ops: int = 0,
     rand_augment_magnitude: float = 0.5,
     horizontal_flip: bool = True,
+    flip_pairs: Optional[Dict[int, int]] = None,
 ) -> VideoTransform:
     return VideoTransform(
         image_size=image_size,
@@ -208,6 +277,7 @@ def build_transforms(
         rand_augment_ops=rand_augment_ops,
         rand_augment_magnitude=rand_augment_magnitude,
         horizontal_flip=horizontal_flip,
+        flip_pairs=flip_pairs,
     )
 
 

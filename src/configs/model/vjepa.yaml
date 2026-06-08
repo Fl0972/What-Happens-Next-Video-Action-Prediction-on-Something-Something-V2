@@ -1,0 +1,13 @@
+# @package _global_
+# V-JEPA 2 ViT-L/16 (Bardes et al., Meta 2025), HuggingFace transformers impl.
+# Default checkpoint is finetuned on Something-Something v2 — our exact domain.
+# Predicts in feature space (not pixels like VideoMAE) → strong motion modelling.
+model:
+  name: vjepa
+  pretrained: true
+  num_classes: ${num_classes}
+  num_frames: ${dataset.num_frames}
+  checkpoint: facebook/vjepa2-vitl-fpc64-256   # self-supervised (label-clean); NOT the -ssv2 finetune
+  unfreeze_top_k: 0                            # 0=frozen probe, K=top-K encoder layers, -1=full finetune
+  gradient_checkpointing: false               # enable for finetuning (unfreeze_top_k!=0) to cap memory
+  warm_start_head_from_ssv2: false            # SSL checkpoint has no SSv2 head to copy from
