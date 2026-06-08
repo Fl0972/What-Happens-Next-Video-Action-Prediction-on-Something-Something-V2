@@ -399,11 +399,24 @@ def train_rotating_folds(
     use_amp = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
+    # --- Early stopping config ---
+    es_patience = int(cfg.training.get("early_stopping_patience", 0))
+    es_min_epochs = int(cfg.training.get("early_stopping_min_epochs", 0))
+    es_min_delta = float(cfg.training.get("early_stopping_min_delta", 1e-4))
+    use_early_stopping = es_patience > 0
+    if use_early_stopping:
+        print(
+            f"Early stopping: patience={es_patience}, min_epochs={es_min_epochs}, "
+            f"min_delta={es_min_delta}",
+            flush=True,
+        )
+
     # --- Resume ---
     resume_path = checkpoint_path.with_stem(checkpoint_path.stem + "_last")
     start_epoch = 0
     best_rolling_avg = 0.0
     rolling_window: List[float] = []
+    no_improve_count = 0
     wandb_run_id: Optional[str] = None
 
     if bool(cfg.training.get("resume", False)) and resume_path.exists():
@@ -417,15 +430,16 @@ def train_rotating_folds(
         start_epoch = int(ckpt["epoch"])
         best_rolling_avg = float(ckpt["best_val_accuracy"])
         rolling_window = list(ckpt.get("rolling_window", []))
+        no_improve_count = int(ckpt.get("no_improve_count", 0))
         wandb_run_id = ckpt.get("wandb_run_id")
-        print(f"  Resumed at epoch {start_epoch}, best_rolling_avg={best_rolling_avg:.4f}")
+        print(f"  Resumed at epoch {start_epoch}, best_rolling_avg={best_rolling_avg:.4f}, no_improve={no_improve_count}")
 
     compile_enabled = bool(cfg.training.get("compile", False)) and device.type == "cuda"
     if compile_enabled:
         compile_mode = str(cfg.training.get("compile_mode", "default"))
         model = torch.compile(model, mode=compile_mode)
 
-    wandb_run = _init_wandb(cfg, run_name="rotating", resume_run_id=wandb_run_id)
+    wandb_run = _init_wandb(cfg, run_name=cfg.training.get("wandb_run_name", "rotating"), resume_run_id=wandb_run_id)
 
     mixup_alpha = float(cfg.training.get("mixup_alpha", 0.0))
     cutmix_prob = float(cfg.training.get("cutmix_prob", 0.0))
@@ -495,28 +509,49 @@ def train_rotating_folds(
                 "lr": current_lr, "best_rolling_avg": best_rolling_avg,
             }, step=epoch + 1)
 
-        if len(rolling_window) == n_folds and rolling_avg > best_rolling_avg:
-            best_rolling_avg = rolling_avg
-            uncompiled_model = getattr(model, "_orig_mod", model)
-            payload: Dict[str, Any] = {
-                "model_state_dict": uncompiled_model.state_dict(),
-                "model_name": cfg.model.name,
-                "num_classes": int(cfg.model.num_classes),
-                "pretrained": bool(cfg.model.pretrained),
-                "num_frames": num_frames,
-                "val_accuracy": rolling_avg,
-                "config": OmegaConf.to_container(cfg, resolve=True),
-            }
-            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(payload, checkpoint_path)
-            print(f"  Saved best → {checkpoint_path} (rolling_avg={rolling_avg:.4f})")
+        if len(rolling_window) == n_folds:
+            if rolling_avg > best_rolling_avg + es_min_delta:
+                best_rolling_avg = rolling_avg
+                no_improve_count = 0
+                uncompiled_model = getattr(model, "_orig_mod", model)
+                payload: Dict[str, Any] = {
+                    "model_state_dict": uncompiled_model.state_dict(),
+                    "model_name": cfg.model.name,
+                    "num_classes": int(cfg.model.num_classes),
+                    "pretrained": bool(cfg.model.pretrained),
+                    "num_frames": num_frames,
+                    "val_accuracy": rolling_avg,
+                    "config": OmegaConf.to_container(cfg, resolve=True),
+                }
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(payload, checkpoint_path)
+                print(f"  Saved best → {checkpoint_path} (rolling_avg={rolling_avg:.4f})")
+            else:
+                no_improve_count += 1
 
         _save_resume_ckpt(
             resume_path, model, optimizer, scheduler, scaler,
             epoch, best_rolling_avg, num_frames, cfg,
             wandb_run_id=wandb_run.id if wandb_run is not None else None,
             rolling_window=list(rolling_window),
+            no_improve_count=no_improve_count,
         )
+
+        if (
+            use_early_stopping
+            and epoch + 1 >= es_min_epochs
+            and len(rolling_window) == n_folds
+            and no_improve_count >= es_patience
+        ):
+            print(
+                f"Early stopping triggered at epoch {epoch + 1}: "
+                f"no improvement for {no_improve_count} epochs "
+                f"(best_rolling_avg={best_rolling_avg:.4f})",
+                flush=True,
+            )
+            if wandb_run is not None:
+                wandb_run.log({"early_stopped_epoch": epoch + 1}, step=epoch + 1)
+            break
 
     log_file.close()
     if wandb_run is not None:

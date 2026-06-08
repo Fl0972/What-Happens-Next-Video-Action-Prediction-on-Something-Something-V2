@@ -1,0 +1,55 @@
+# @package _global_
+# Like TSM_ultra_v2 but with ResNet50 backbone— rotating folds variant.
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet50
+  fold_div: 4
+  drop_path_rate: 0.1
+  dropout: 0.3
+
+training:
+  epochs: 200
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 25
+  sgdr_t_mult: 1
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_ultra_resnet50_rotating.pt
+
+  # Auto-resume on restart
+  resume: true
+
+  # Weights & Biases
+  wandb_project: "challenge-modal"
+  wandb_run_name: "tsm_ultra_resnet50_rotating"
+
+  # Early stopping: halt if rolling-avg val acc doesn't improve for patience epochs
+  # Only activates after min_epochs (past warmup + first full rotation)
+  early_stopping_patience: 40
+  early_stopping_min_epochs: 50
+  early_stopping_min_delta: 0.0001

@@ -1,0 +1,112 @@
+\begin{thebibliography}{16}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Bardes et~al.(2025)Bardes, Garrido, Ponce, Rabbat, LeCun, Assran, and
+  Ballas]{bardes2025vjepa2}
+Adrien Bardes, Quentin Garrido, Jean Ponce, Michael Rabbat, Yann LeCun, Mahmoud
+  Assran, and Nicolas Ballas.
+\newblock {V-JEPA 2: Self-Supervised Video Models Enable Understanding,
+  Prediction and Planning}.
+\newblock \emph{arXiv preprint arXiv:2506.09985}, 2025.
+
+\bibitem[Cubuk et~al.(2020)Cubuk, Zoph, Shlens, and Le]{cubuk2020randaugment}
+Ekin~D. Cubuk, Barret Zoph, Jonathon Shlens, and Quoc~V. Le.
+\newblock {RandAugment: Practical Automated Data Augmentation with a Reduced
+  Search Space}.
+\newblock In \emph{CVPR Workshops}, 2020.
+
+\bibitem[Goyal et~al.(2017)Goyal, Ebrahimi~Kahou, Michalski, Materzynska,
+  Westphal, Kim, Haenel, Fruend, Yianilos, Mueller-Freitag,
+  et~al.]{goyal2017ssv2}
+Raghav Goyal, Samira Ebrahimi~Kahou, Vincent Michalski, Joanna Materzynska,
+  Susanne Westphal, Heuna Kim, Valentin Haenel, Ingo Fruend, Peter Yianilos,
+  Moritz Mueller-Freitag, et~al.
+\newblock {The ``Something Something'' Video Database for Learning and
+  Evaluating Visual Common Sense}.
+\newblock In \emph{ICCV}, 2017.
+
+\bibitem[He et~al.(2016)He, Zhang, Ren, and Sun]{he2016resnet}
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+\newblock {Deep Residual Learning for Image Recognition}.
+\newblock In \emph{CVPR}, 2016.
+
+\bibitem[Huang et~al.(2016)Huang, Sun, Liu, Sedra, and
+  Weinberger]{huang2016stochdepth}
+Gao Huang, Yu Sun, Zhuang Liu, Daniel Sedra, and Kilian~Q. Weinberger.
+\newblock {Deep Networks with Stochastic Depth}.
+\newblock In \emph{ECCV}, 2016.
+
+\bibitem[Kay et~al.(2017)Kay, Carreira, Simonyan, Zhang, Hillier,
+  Vijayanarasimhan, Viola, Green, Back, Natsev, et~al.]{kay2017kinetics}
+Will Kay, Jo{\~a}o Carreira, Karen Simonyan, Brian Zhang, Chloe Hillier,
+  Sudheendra Vijayanarasimhan, Fabio Viola, Tim Green, Trevor Back, Paul
+  Natsev, et~al.
+\newblock {The Kinetics Human Action Video Dataset}.
+\newblock \emph{arXiv preprint arXiv:1705.06950}, 2017.
+
+\bibitem[Lin et~al.(2019)Lin, Gan, and Han]{lin2019tsm}
+Ji Lin, Chuang Gan, and Song Han.
+\newblock {TSM: Temporal Shift Module for Efficient Video Understanding}.
+\newblock In \emph{ICCV}, 2019.
+
+\bibitem[Lin et~al.(2017)Lin, Goyal, Girshick, He, and
+  Doll{\'a}r]{lin2017focal}
+Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Doll{\'a}r.
+\newblock {Focal Loss for Dense Object Detection}.
+\newblock In \emph{ICCV}, 2017.
+
+\bibitem[Loshchilov and Hutter(2017)]{loshchilov2017sgdr}
+Ilya Loshchilov and Frank Hutter.
+\newblock {SGDR: Stochastic Gradient Descent with Warm Restarts}.
+\newblock In \emph{ICLR}, 2017.
+
+\bibitem[Loshchilov and Hutter(2019)]{loshchilov2019adamw}
+Ilya Loshchilov and Frank Hutter.
+\newblock {Decoupled Weight Decay Regularization}.
+\newblock In \emph{ICLR}, 2019.
+
+\bibitem[M{\"u}ller et~al.(2019)M{\"u}ller, Kornblith, and
+  Hinton]{muller2019labelsmooth}
+Rafael M{\"u}ller, Simon Kornblith, and Geoffrey Hinton.
+\newblock {When Does Label Smoothing Help?}
+\newblock In \emph{NeurIPS}, 2019.
+
+\bibitem[Tong et~al.(2022)Tong, Song, Wang, and Wang]{tong2022videomae}
+Zhan Tong, Yibing Song, Jue Wang, and Limin Wang.
+\newblock {VideoMAE: Masked Autoencoders are Data-Efficient Learners for
+  Self-Supervised Video Pre-Training}.
+\newblock In \emph{NeurIPS}, 2022.
+
+\bibitem[Tran et~al.(2018)Tran, Wang, Torresani, Ray, LeCun, and
+  Paluri]{tran2018r2plus1d}
+Du Tran, Heng Wang, Lorenzo Torresani, Jamie Ray, Yann LeCun, and Manohar
+  Paluri.
+\newblock {A Closer Look at Spatiotemporal Convolutions for Action
+  Recognition}.
+\newblock In \emph{CVPR}, 2018.
+
+\bibitem[Xiong et~al.(2020)Xiong, Yang, He, Zheng, Zheng, Xing, Zhang, Lan,
+  Wang, and Liu]{xiong2020prenorm}
+Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing,
+  Huishuai Zhang, Yanyan Lan, Liwei Wang, and Tie-Yan Liu.
+\newblock {On Layer Normalization in the Transformer Architecture}.
+\newblock In \emph{ICML}, 2020.
+
+\bibitem[Yun et~al.(2019)Yun, Han, Oh, Chun, Choe, and Yoo]{yun2019cutmix}
+Sangdoo Yun, Dongyoon Han, Seong~Joon Oh, Sanghyuk Chun, Junsuk Choe, and
+  Youngjoon Yoo.
+\newblock {CutMix: Regularization Strategy to Train Strong Classifiers with
+  Localizable Features}.
+\newblock In \emph{ICCV}, 2019.
+
+\bibitem[Zhang et~al.(2018)Zhang, Cisse, Dauphin, and
+  Lopez-Paz]{zhang2018mixup}
+Hongyi Zhang, Moustapha Cisse, Yann~N. Dauphin, and David Lopez-Paz.
+\newblock {mixup: Beyond Empirical Risk Minimization}.
+\newblock In \emph{ICLR}, 2018.
+
+\end{thebibliography}

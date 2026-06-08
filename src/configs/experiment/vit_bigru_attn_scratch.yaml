@@ -1,28 +1,47 @@
 # @package _global_
 # ViT-B/16 + BiGRU + temporal attention pooling — from-scratch closed-track recipe.
+# Single model, rotating folds, automatic resume, W&B monitoring.
 #
-# Key differences from vit_bigru_attn (pretrained fine-tuning):
+# Architecture: ViT-B/16 (86 M params, random init) → [CLS] per frame →
+#               BiGRU(256, bidirectional) → temporal attention → Linear(33)
 #
-#   1. pretrained: false — random backbone initialisation.
+# Design notes
+# ────────────
+# 1. pretrained=false / no backbone_lr_scale
+#    LLRD (backbone_lr_scale<1) is a fine-tuning trick; with random init it
+#    starves the backbone of gradient signal → stuck-at-3% failure mode.
 #
-#   2. backbone_lr_scale removed — uniform LR across all layers.
-#      LLRD (backbone_lr_scale=0.05) is a fine-tuning trick; with a randomly-
-#      initialised backbone it starves the backbone of gradient signal and causes
-#      stuck-at-~3% failure (same issue observed in tsm_resnet50_bigru_scratch).
+# 2. lr=3e-4  (was 1e-3)
+#    ViT attention layers diverge at CNN-scale LRs early in training.
+#    DeiT reference: 5e-4 @ BS=1024; scaled to BS=32 on a small dataset → 3e-4.
 #
-#   3. epochs: 150, warmup: 15 — ViT needs far more passes to converge from scratch.
+# 3. warmup_epochs=20, reg_warmup_epochs=20
+#    Long warmup lets the randomly-initialised QK dot-products settle before
+#    the main LR kicks in. reg_warmup also keeps MixUp/CutMix off during this
+#    fragile phase.
 #
-#   4. weight_decay: 0.1, feat_dropout: 0.3, head_dropout: 0.5 — stronger
-#      regularisation; ViT-B/16 has 86M parameters on a small dataset.
+# 4. cosine_warm_restarts, sgdr_t0=26
+#    post-warmup = 150 - 20 = 130 epochs → 5 clean SGDR cycles of 26 epochs.
+#    Periodic restarts help escape shallow local minima from scratch.
 #
-#   5. cosine_warm_restarts (sgdr_t0=30) — periodic LR resets help escape shallow
-#      local minima that a pretrained model never encounters.
+# 5. weight_decay=0.1, feat_dropout=0.3, head_dropout=0.5
+#    Strong regularisation to compensate for 86 M parameters on a small dataset.
 #
-#   6. Stronger augmentation (mixup 0.4, cutmix 0.5, label_smoothing 0.2,
-#      rand_augment_magnitude 0.7) — matches the from-scratch budget used in
-#      efficientformer_scratch_rotating.
+# 6. batch_size=32  (24 GB VRAM)
+#    128 ViT-B/16 forward passes per step (B×T) comfortably fit with AMP (fp16).
+#    Larger batch also stabilises the rotating-folds rolling-average signal.
 #
-#   7. rotating_folds: true — closed-track policy: no pretrained weights.
+# 7. compile=true
+#    torch.compile (default mode) gives ~20 % throughput on modern CUDA GPUs.
+#    First epoch costs ~3 min compile time; break-even is epoch 2.
+#
+# 8. resume=true, rotating_folds=true
+#    Saves {checkpoint}_last.pt every epoch. Re-running the same command after
+#    any failure or reboot picks up exactly where training stopped.
+#
+# 9. wandb_project="challenge-modal"
+#    Live loss/accuracy/rolling-avg curves in W&B. Run ID is stored in the
+#    resume checkpoint so the resumed run continues the same W&B timeline.
 #
 # Run: cd src && python train_kfold.py experiment=vit_bigru_attn_scratch
 
@@ -30,7 +49,7 @@ defaults:
   - override /model: vit_bigru_attn
 
 dataset:
-  num_frames: 4
+  num_frames: 8
   image_size: 224
 
 model:
@@ -42,15 +61,15 @@ model:
 
 training:
   epochs: 150
-  batch_size: 16
-  lr: 0.001
+  batch_size: 32
+  lr: 0.0003
   optimizer: adamw
   weight_decay: 0.1
   scheduler: cosine_warm_restarts
-  sgdr_t0: 30
+  sgdr_t0: 26
   sgdr_t_mult: 1
-  warmup_epochs: 15
-  reg_warmup_epochs: 15
+  warmup_epochs: 20
+  reg_warmup_epochs: 20
   label_smoothing: 0.2
   mixup_alpha: 0.4
   cutmix_prob: 0.5
@@ -60,7 +79,10 @@ training:
   horizontal_flip: false
   weighted_sampling: true
   sampler_power: 0.5
+  compile: true
+  compile_mode: default
   rotating_folds: true
   n_folds: 5
   resume: true
+  wandb_project: "challenge-modal"
   checkpoint_path: ${hydra:runtime.cwd}/../models/vit_bigru_attn_scratch.pt

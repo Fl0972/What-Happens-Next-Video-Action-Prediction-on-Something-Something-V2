@@ -1,0 +1,756 @@
+{
+  "n_val": 6745,
+  "n_classes": 33,
+  "n_classes_present": 32,
+  "per_model_valdir": {
+    "TSM-ResNet50 (rot)": {
+      "top1": 0.4285,
+      "top5": 0.7532,
+      "macro_precision": 0.4012,
+      "macro_recall": 0.3776,
+      "macro_f1": 0.3859
+    },
+    "Ablation-A: TSM no-focal (rot)": {
+      "top1": 0.3892,
+      "top5": 0.6976,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": null
+    },
+    "Ablation-C: TSM focal-γ1 (rot)": {
+      "top1": 0.3950,
+      "top5": 0.7085,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": null
+    },
+    "Ablation-E: TSM SGDR-T2 (rot)": {
+      "top1": 0.3941,
+      "top5": 0.7026,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": null
+    },
+    "Ablation-B: VFL 2-layer (rot)": {
+      "top1": 0.3536,
+      "top5": 0.6729,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": null
+    },
+    "Ablation-D: VFL 10-fold (rot)": {
+      "top1": 0.3598,
+      "top5": 0.6792,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": null
+    },
+    "Ablation-F: VFL2 SGDR-T2 (rot)": {
+      "top1": 0.3524,
+      "top5": 0.6474,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": null
+    },
+    "TSM-Ultra": {
+      "top1": 0.3491,
+      "top5": 0.6688,
+      "macro_precision": 0.3314,
+      "macro_recall": 0.3301,
+      "macro_f1": 0.3229
+    },
+    "TSM-Ultra +TTA": {
+      "top1": 0.3591,
+      "top5": 0.6944,
+      "macro_precision": 0.3474,
+      "macro_recall": 0.3311,
+      "macro_f1": 0.3252
+    },
+    "TSM-Ultra-v2": {
+      "top1": 0.3825,
+      "top5": 0.687,
+      "macro_precision": 0.3535,
+      "macro_recall": 0.3556,
+      "macro_f1": 0.3472
+    },
+    "TSM-Ultra-v2 +TTA": {
+      "top1": 0.4086,
+      "top5": 0.7168,
+      "macro_precision": 0.3852,
+      "macro_recall": 0.37,
+      "macro_f1": 0.3663
+    },
+    "TSM-Ultra-v2 (rot)": {
+      "top1": 0.3945,
+      "top5": 0.6947,
+      "macro_precision": 0.3735,
+      "macro_recall": 0.371,
+      "macro_f1": 0.3656
+    },
+    "TSM-Ultra-v2 (rot) +TTA": {
+      "top1": 0.4168,
+      "top5": 0.7277,
+      "macro_precision": 0.3883,
+      "macro_recall": 0.3804,
+      "macro_f1": 0.3766
+    },
+    "VFL-focal": {
+      "top1": 0.3311,
+      "top5": 0.6617,
+      "macro_precision": 0.3092,
+      "macro_recall": 0.3085,
+      "macro_f1": 0.3044
+    },
+    "VFL-focal +TTA": {
+      "top1": 0.3577,
+      "top5": 0.6844,
+      "macro_precision": 0.3371,
+      "macro_recall": 0.3261,
+      "macro_f1": 0.323
+    },
+    "VFL-Ultra": {
+      "top1": 0.3211,
+      "top5": 0.6485,
+      "macro_precision": 0.2953,
+      "macro_recall": 0.2983,
+      "macro_f1": 0.2928
+    },
+    "VFL-Ultra +TTA": {
+      "top1": 0.3503,
+      "top5": 0.6777,
+      "macro_precision": 0.3287,
+      "macro_recall": 0.322,
+      "macro_f1": 0.3175
+    },
+    "VFL-Ultra (rot)": {
+      "top1": 0.3644,
+      "top5": 0.6848,
+      "macro_precision": 0.3414,
+      "macro_recall": 0.3497,
+      "macro_f1": 0.3403
+    },
+    "VFL-Ultra (rot) +TTA": {
+      "top1": 0.3781,
+      "top5": 0.7024,
+      "macro_precision": 0.3585,
+      "macro_recall": 0.3532,
+      "macro_f1": 0.346
+    }
+  },
+  "ensembles": {
+    "BEST: R50+tsm_v2_tta+tsm_v2_rot_tta+vfl_rot_tta+tsm_no_focal": {
+      "top1": 0.4675,
+      "top5": 0.7698,
+      "macro_precision": 0.4368,
+      "macro_recall": 0.4199,
+      "macro_f1": 0.4190,
+      "note": "5-model log-softmax avg; R50 no-TTA, rest with TTA"
+    },
+    "R50+tsm_v2_tta+tsm_v2_rot_tta+vfl_rot_tta (4-model)": {
+      "top1": 0.4623,
+      "top5": 0.7701,
+      "macro_precision": 0.4370,
+      "macro_recall": 0.4147,
+      "macro_f1": 0.4146
+    },
+    "R50+tsm_v2_rot_tta+vfl_rot_tta (3-model)": {
+      "top1": 0.4620,
+      "top5": 0.7721,
+      "macro_precision": null,
+      "macro_recall": null,
+      "macro_f1": 0.4154
+    },
+    "best_logavg_3model (tsm_v2_tta+tsm_v2_rot_tta+vfl_rot_tta)": {
+      "top1": 0.4403,
+      "top5": 0.7537,
+      "macro_precision": 0.4186,
+      "macro_recall": 0.4039,
+      "macro_f1": 0.4001
+    },
+    "logavg2 (tsm_v2_tta+tsm_v2_rot_tta)": {
+      "top1": 0.434,
+      "top5": 0.7382,
+      "macro_precision": 0.4152,
+      "macro_recall": 0.3973,
+      "macro_f1": 0.3936
+    },
+    "all6_TTA_logavg": {
+      "top1": 0.4273,
+      "top5": 0.7486,
+      "macro_precision": 0.4081,
+      "macro_recall": 0.3904,
+      "macro_f1": 0.3877
+    }
+  },
+  "leave_one_out_best_5model_ensemble": {
+    "-tsm_resnet50_rot": {
+      "top1": 0.4541,
+      "delta_pp": -1.33
+    },
+    "-tsm_v2_rot_tta": {
+      "top1": 0.4627,
+      "delta_pp": -0.47
+    },
+    "-vfl_rot_tta": {
+      "top1": 0.4611,
+      "delta_pp": -0.64
+    },
+    "-tsm_v2_tta": {
+      "top1": 0.4643,
+      "delta_pp": -0.31
+    },
+    "-tsm_no_focal_rot": {
+      "top1": 0.4623,
+      "delta_pp": -0.52
+    }
+  },
+  "leave_one_out_best_ensemble": {
+    "-tsm_v2_tta": {
+      "top1": 0.4295033358042995,
+      "delta_pp": -1.08
+    },
+    "-tsm_v2_rot_tta": {
+      "top1": 0.4296515937731653,
+      "delta_pp": -1.07
+    },
+    "-vfl_rot_tta": {
+      "top1": 0.4339510748702743,
+      "delta_pp": -0.64
+    }
+  },
+  "tta_directional_tradeoff": {
+    "overall_top1_noTTA": 0.4329,
+    "overall_top1_TTA": 0.4403,
+    "dir_f1_noTTA": {
+      "Pulling something from left to right": 0.645,
+      "Pulling something from right to left": 0.48
+    },
+    "dir_f1_TTA": {
+      "Pulling something from left to right": 0.274,
+      "Pulling something from right to left": 0.278
+    }
+  },
+  "pairwise_agreement": {
+    "models": [
+      "TSM-Ultra-v2",
+      "TSM-Ultra-v2 +TTA",
+      "TSM-Ultra-v2 (rot)",
+      "TSM-Ultra-v2 (rot) +TTA",
+      "TSM-Ultra",
+      "TSM-Ultra +TTA",
+      "VFL-Ultra",
+      "VFL-Ultra +TTA",
+      "VFL-Ultra (rot)",
+      "VFL-Ultra (rot) +TTA",
+      "VFL-focal",
+      "VFL-focal +TTA"
+    ],
+    "matrix": [
+      [
+        1.0,
+        0.632,
+        0.512,
+        0.5,
+        0.472,
+        0.45,
+        0.409,
+        0.407,
+        0.427,
+        0.422,
+        0.409,
+        0.411
+      ],
+      [
+        0.632,
+        1.0,
+        0.503,
+        0.592,
+        0.467,
+        0.531,
+        0.408,
+        0.467,
+        0.432,
+        0.48,
+        0.415,
+        0.468
+      ],
+      [
+        0.512,
+        0.503,
+        1.0,
+        0.644,
+        0.465,
+        0.452,
+        0.4,
+        0.419,
+        0.432,
+        0.435,
+        0.406,
+        0.419
+      ],
+      [
+        0.5,
+        0.592,
+        0.644,
+        1.0,
+        0.457,
+        0.517,
+        0.405,
+        0.472,
+        0.444,
+        0.504,
+        0.412,
+        0.479
+      ],
+      [
+        0.472,
+        0.467,
+        0.465,
+        0.457,
+        1.0,
+        0.649,
+        0.396,
+        0.409,
+        0.414,
+        0.423,
+        0.402,
+        0.411
+      ],
+      [
+        0.45,
+        0.531,
+        0.452,
+        0.517,
+        0.649,
+        1.0,
+        0.391,
+        0.452,
+        0.409,
+        0.467,
+        0.4,
+        0.466
+      ],
+      [
+        0.409,
+        0.408,
+        0.4,
+        0.405,
+        0.396,
+        0.391,
+        1.0,
+        0.627,
+        0.484,
+        0.475,
+        0.526,
+        0.497
+      ],
+      [
+        0.407,
+        0.467,
+        0.419,
+        0.472,
+        0.409,
+        0.452,
+        0.627,
+        1.0,
+        0.482,
+        0.565,
+        0.501,
+        0.608
+      ],
+      [
+        0.427,
+        0.432,
+        0.432,
+        0.444,
+        0.414,
+        0.409,
+        0.484,
+        0.482,
+        1.0,
+        0.641,
+        0.491,
+        0.48
+      ],
+      [
+        0.422,
+        0.48,
+        0.435,
+        0.504,
+        0.423,
+        0.467,
+        0.475,
+        0.565,
+        0.641,
+        1.0,
+        0.486,
+        0.573
+      ],
+      [
+        0.409,
+        0.415,
+        0.406,
+        0.412,
+        0.402,
+        0.4,
+        0.526,
+        0.501,
+        0.491,
+        0.486,
+        1.0,
+        0.628
+      ],
+      [
+        0.411,
+        0.468,
+        0.419,
+        0.479,
+        0.411,
+        0.466,
+        0.497,
+        0.608,
+        0.48,
+        0.573,
+        0.628,
+        1.0
+      ]
+    ]
+  },
+  "best_ensemble": "log_avg(tsm_resnet50_rot + tsm_v2_tta + tsm_v2_rot_tta + vfl_rot_tta + tsm_no_focal_rot)",
+  "best_single_file": "tsm_ultra_resnet50_rotating_rotating_44%",
+  "macro_best_ensemble": {
+    "precision": 0.4368,
+    "recall": 0.4199,
+    "f1": 0.4190
+  },
+  "best5_classes": [
+    {
+      "class": "Pouring something into something",
+      "f1": 0.63,
+      "support": 278
+    },
+    {
+      "class": "Moving something closer to something",
+      "f1": 0.624,
+      "support": 213
+    },
+    {
+      "class": "Moving something away from something",
+      "f1": 0.604,
+      "support": 183
+    },
+    {
+      "class": "Uncovering something",
+      "f1": 0.579,
+      "support": 391
+    },
+    {
+      "class": "Folding something",
+      "f1": 0.578,
+      "support": 285
+    }
+  ],
+  "worst5_classes": [
+    {
+      "class": "Spilling something next to something",
+      "f1": 0.03,
+      "support": 60
+    },
+    {
+      "class": "Picking something up",
+      "f1": 0.087,
+      "support": 199
+    },
+    {
+      "class": "Pretending to throw something",
+      "f1": 0.149,
+      "support": 47
+    },
+    {
+      "class": "Pretending to put something into something",
+      "f1": 0.182,
+      "support": 68
+    },
+    {
+      "class": "Putting something onto something",
+      "f1": 0.272,
+      "support": 139
+    }
+  ],
+  "top_confused_pairs": [
+    {
+      "true": "Moving something up",
+      "pred": "Pretending to pick something up",
+      "count": 43
+    },
+    {
+      "true": "Picking something up",
+      "pred": "Pretending to pick something up",
+      "count": 40
+    },
+    {
+      "true": "Showing something to the camera",
+      "pred": "Turning something upside down",
+      "count": 38
+    },
+    {
+      "true": "Spilling something next to something",
+      "pred": "Putting something next to something",
+      "count": 36
+    },
+    {
+      "true": "Folding something",
+      "pred": "class 32",
+      "count": 34
+    },
+    {
+      "true": "Showing something to the camera",
+      "pred": "Holding something",
+      "count": 32
+    },
+    {
+      "true": "Moving something down",
+      "pred": "Holding something",
+      "count": 29
+    },
+    {
+      "true": "class 32",
+      "pred": "Folding something",
+      "count": 28
+    },
+    {
+      "true": "Uncovering something",
+      "pred": "Moving something up",
+      "count": 27
+    },
+    {
+      "true": "Pulling something from right to left",
+      "pred": "Putting something next to something",
+      "count": 26
+    },
+    {
+      "true": "Dropping something into something",
+      "pred": "Putting something into something",
+      "count": 26
+    },
+    {
+      "true": "Closing something",
+      "pred": "Opening something",
+      "count": 26
+    },
+    {
+      "true": "Picking something up",
+      "pred": "Uncovering something",
+      "count": 25
+    },
+    {
+      "true": "Opening something",
+      "pred": "Holding something",
+      "count": 25
+    },
+    {
+      "true": "Unfolding something",
+      "pred": "Folding something",
+      "count": 24
+    }
+  ],
+  "checkpoints": [
+    {
+      "name": "efficientformer_scratch_rotating",
+      "internal_val_acc": 0.0828,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 11.4,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "maxvit_interp_rotating",
+      "internal_val_acc": 0.0662,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 30.5,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "r2plus1d_closed",
+      "internal_val_acc": 0.1078,
+      "num_frames": 8,
+      "pretrained": false,
+      "params_M": 31.3,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "tsm_resnet50_bigru",
+      "internal_val_acc": 0.0698,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 27.1,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "tsm_resnet50_bigru_rotating",
+      "internal_val_acc": 0.0757,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 27.1,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "tsm_resnet50_bigru_scratch_rotating",
+      "internal_val_acc": 0.0908,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 27.1,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "tsm_ultra",
+      "internal_val_acc": 0.5332,
+      "num_frames": 5,
+      "pretrained": false,
+      "params_M": 11.2,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "tsm_ultra_50",
+      "internal_val_acc": 0.4526,
+      "num_frames": 8,
+      "pretrained": false,
+      "params_M": 23.6,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "tsm_ultra_v2",
+      "internal_val_acc": 0.5773,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 11.2,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "tsm_ultra_v2_rotating",
+      "internal_val_acc": 0.9583,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 11.2,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "vfl_ultra_focal",
+      "internal_val_acc": 0.5317,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 17.5,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "video_former_lite_closed",
+      "internal_val_acc": 0.4578,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 17.5,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "video_former_lite_ultra",
+      "internal_val_acc": 0.5337,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 17.5,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "video_former_lite_ultra_rotating",
+      "internal_val_acc": 0.7822,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 20.7,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "vit_bigru_attn_scratch_kfold_fold_0",
+      "internal_val_acc": 0.058,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 87.4,
+      "has_valdir_logits": false
+    },
+    {
+      "name": "tsm_ultra_resnet50_rotating_rotating_44%",
+      "note": "TSM on ResNet50 backbone, T=4, rotating folds, best checkpoint (44% rolling avg)",
+      "internal_val_acc": 0.8341,
+      "valdir_top1": 0.4285,
+      "valdir_top5": 0.7532,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 23.6,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "ablation_tsm_no_focal_rotating",
+      "note": "Exp A: TSM-Ultra-v2-rot with CE loss instead of focal γ=2",
+      "internal_rolling_avg": 0.9591,
+      "valdir_top1": 0.3892,
+      "valdir_top5": 0.6976,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 11.2,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "ablation_tsm_focal_g1_rotating",
+      "note": "Exp C: TSM-Ultra-v2-rot with focal γ=1 instead of γ=2",
+      "internal_rolling_avg": 0.9550,
+      "valdir_top1": 0.3950,
+      "valdir_top5": 0.7085,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 11.2,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "ablation_tsm_sgdr_t2_rotating",
+      "note": "Exp E: TSM-Ultra-v2-rot with SGDR T_mult=2, T0=12 instead of T_mult=1, T0=25",
+      "internal_rolling_avg": 0.9727,
+      "valdir_top1": 0.3941,
+      "valdir_top5": 0.7026,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 11.2,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "ablation_vfl_2layers_rotating",
+      "note": "Exp B: VFL-Ultra-rot with n_layers=2 instead of 3",
+      "internal_rolling_avg": 0.8111,
+      "valdir_top1": 0.3536,
+      "valdir_top5": 0.6729,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 17.1,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "ablation_vfl_folds10_rotating",
+      "note": "Exp D: VFL-Ultra-rot with n_folds=10 instead of 5",
+      "internal_rolling_avg": 0.8226,
+      "valdir_top1": 0.3598,
+      "valdir_top5": 0.6792,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 20.7,
+      "has_valdir_logits": true
+    },
+    {
+      "name": "ablation_vfl2_sgdr_t2_rotating",
+      "note": "Exp F: VFL 2-layer-rot with SGDR T_mult=2, T0=12",
+      "internal_rolling_avg": 0.9520,
+      "valdir_top1": 0.3524,
+      "valdir_top5": 0.6474,
+      "num_frames": 4,
+      "pretrained": false,
+      "params_M": 17.1,
+      "has_valdir_logits": true
+    }
+  ]
+}

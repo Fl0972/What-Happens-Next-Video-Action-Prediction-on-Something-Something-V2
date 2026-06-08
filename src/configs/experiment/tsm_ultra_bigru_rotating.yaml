@@ -1,0 +1,78 @@
+# @package _global_
+# TSM-ultra + BiGRU head — rotating folds variant.
+#
+# Motivation: tsm_ultra_v2_rotating achieves ~44% on the true val set using
+# ResNet18 + TSM + mean-pool. This experiment replaces the mean-pool classifier
+# with a BiGRU head to test whether explicit ordered temporal reasoning adds
+# value on top of the TSM local shifts.
+#
+# Backbone choice: ResNet18 (not ResNet50) to keep the ablation clean —
+# isolates BiGRU head contribution vs mean-pool, without changing backbone capacity.
+#
+# Key differences vs tsm_ultra_v2_rotating:
+#
+#   * model: tsm_gru (BiGRU head instead of mean-pool)
+#       gru_hidden=128 → 256-dim head (conservative; ResNet18 features are 512-dim)
+#       feat_dropout=0.3, head_dropout=0.5 (same as bigru_scratch baseline)
+#
+#   * fold_div 4 (same as ultra_v2 — proven best for TSM on this dataset)
+#
+#   * focal_gamma=2.0 (carried over from ultra_v2 — +4.4pp gain, do not remove)
+#
+#   * drop_path_rate 0.15 (slightly higher than ultra_v2's 0.1 — extra
+#       regularization for the larger head; BiGRU adds ~0.5M params)
+#
+# Unchanged from tsm_ultra_v2_rotating (all proven):
+#   backbone=resnet18, num_frames=4, image_size=224, epochs=200,
+#   lr=1e-3, adamw, weight_decay=5e-4, cosine_warm_restarts T0=25,
+#   warmup_epochs=8, reg_warmup_epochs=10, label_smoothing=0.1,
+#   mixup_alpha=0.2, cutmix_prob=0.25, RandAug(2, 0.5),
+#   horizontal_flip=false, weighted_sampling=true, sampler_power=0.5,
+#   rotating_folds=true, n_folds=5, compile=true.
+#
+# Run: cd src && python train_kfold.py experiment=tsm_ultra_bigru_rotating
+
+defaults:
+  - override /model: tsm_gru
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 4
+  drop_path_rate: 0.15
+  gru_hidden: 128
+  gru_layers: 1
+  feat_dropout: 0.3
+  head_dropout: 0.5
+
+training:
+  epochs: 200
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 25
+  sgdr_t_mult: 1
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  resume: true
+  rotating_folds: true
+  n_folds: 5
+  checkpoint_path: ${hydra:runtime.cwd}/../models/tsm_ultra_bigru_rotating.pt
+  wandb_project: "challenge-modal"

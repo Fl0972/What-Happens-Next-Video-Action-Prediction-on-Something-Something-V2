@@ -1,0 +1,85 @@
+# @package _global_
+# ABLATION G — TSM with single-cosine high-peak LR (one-cycle shape).
+#
+# Question answered: rotating folds already provide strong regularisation by
+# shifting the training distribution every epoch. Do SGDR restarts add
+# exploration benefit on top of that — or are they actually harmful, causing
+# repeated accuracy dips (observed at every restart in T3/A/C)?
+#
+# This experiment tests the "no-restart" hypothesis with a single smooth
+# LR sweep peaking at 3e-3 (3× the T3 base LR):
+#
+# LR trace with lr=3e-3, scheduler=cosine, warmup_epochs=20, epochs=200:
+#   ep  0–19 : LinearLR warmup: 3e-5 → 3e-3   (start_factor=0.01)
+#   ep 20–199: CosineAnnealingLR: 3e-3 → ~0
+#
+#   Peak LR (3e-3) is 3× T3's 1e-3. The high peak encourages broader
+#   weight-space exploration before the long cosine tail allows fine
+#   convergence — the classic "one-cycle" shape (Smith & Topin, 2019).
+#
+# vs T3 reference (SGDR T0=25, T_mult=1, lr=1e-3, 200 ep):
+#   8 restart cycles; rolling-avg dips at each restart; model truncated
+#   mid-cycle at ep 200.
+#
+# Single axis changed vs tsm_ultra_v2_rotating:
+#   lr          1e-3  →  3e-3   (3× higher peak)
+#   scheduler   cosine_warm_restarts  →  cosine  (single sweep, no restarts)
+#   warmup_epochs  8  →  20     (longer warmup to stabilise high-LR phase)
+#   reg_warmup_epochs 10 → 20   (keep MixUp/CutMix off during high-LR instability)
+#
+# Everything else identical: T=4, focal γ=2, fold_div=4, R18, AdamW wd=5e-4,
+# rotating 5-fold, RandAug(2,0.5), label_smoothing=0.1, weighted_sampling,
+# drop_path=0.1, dropout=0.3.
+#
+# Expected outcome:
+#   If one-cycle wins → restart dips are net harmful given rotating-fold
+#     regularisation; val-dir > 39.45% (T3). High peak also exits local minima.
+#   If SGDR wins → restarts provide exploration that the rotating fold alone
+#     cannot replicate; one long cosine sweep overfits in the high-LR phase.
+#   If tied → loss function and LR schedule shape do not move TSM further
+#     from its 39.4% ceiling; architecture is the binding constraint.
+#
+# Wall-clock: same as T3 (~4 min/ep × 200 ep ≈ 13h on A4000 @ 150W).
+# Run (Machine 3):
+#   cd src && python train_kfold.py experiment=ablation_tsm_onecycle_rotating
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 4
+  drop_path_rate: 0.1
+  dropout: 0.3
+
+training:
+  epochs: 200
+  batch_size: 32
+  lr: 0.003              # changed: 1e-3 → 3e-3 (3× higher peak LR)
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine       # changed: cosine_warm_restarts → cosine (single sweep)
+  warmup_epochs: 20       # changed: 8 → 20 (stabilise the 3× higher LR peak)
+  reg_warmup_epochs: 20   # changed: 10 → 20 (match LR warmup; high LR + MixUp = unstable)
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  wandb_run_name: "ablation-G-tsm-onecycle"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/ablation_tsm_onecycle.pt

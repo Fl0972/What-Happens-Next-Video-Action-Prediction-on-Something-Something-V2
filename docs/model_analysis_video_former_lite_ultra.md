@@ -28,6 +28,42 @@ Pre-Layer-Normalisation (Pre-LN) Transformer blocks [Xiong et al., ICML 2020] ar
 
 **Secondary hypothesis:** The residual errors of VFL-Ultra are uncorrelated with those of TSM-Ultra-v2, making VFL-Ultra a valuable ensemble partner despite its lower standalone accuracy.
 
+### 1.4 Architecture Diagram and Temporal Footprint
+
+The diagram below traces a clip through VFL-Ultra. The contrast with TSM is structural: the ResNet18 backbone here is **completely time-blind** — frames are processed independently and global-average-pooled to a single 512-d vector each. *All* temporal reasoning is deferred to a dedicated 2-layer Transformer that attends over those pooled per-frame vectors (`src/models/video_former_lite.py:183` `forward`; encoder block at `:98`).
+
+```
+ Input clip                       (B, T=4, C=3, H=224, W=224)
+      │  reshape → (B·T, 3, 224, 224)
+      v
++-------------------------------------------------------------+
+|  ResNet18 backbone -- NO temporal mixing of any kind        |
+|  global average pool -> (B·T, 512)                          |
+|   => spatial detail is COLLAPSED to one vector per frame    |
+|      BEFORE the time axis is ever touched                   |
++-------------------------------------------------------------+
+      |  reshape -> (B, T=4, 512)
+      v
+   prepend [CLS] + add learnable temporal pos-embed -> (B, 5, 512)
+      v
++-------------------------------------------------------------+
+|  x2  Pre-LN Transformer encoder block                       |
+|                                                             |
+|     Multi-Head Self-Attention (8 heads), all-to-all:        |
+|                                                             |
+|        [CLS]  f1   f2   f3   f4                              |
+|          \____|____|____|____/  every token attends to      |
+|               every other token in ONE step (global, O(T^2))|
+|                                                             |
+|     + MLP (d_ff = 2048), GELU                                |
++-------------------------------------------------------------+
+      |  take [CLS] -> LayerNorm -> dropout 0.2
+      v
+   Linear -> (B, 33) logits
+```
+
+**Temporal footprint.** VFL-Ultra's temporal reasoning is *global and explicit but coarse and late*: frame 1 and frame 4 sit a single attention hop apart (no locality bias, unlike TSM's ±1-frame-per-block shift), and a learnable [CLS] query aggregates the whole clip in one place. But this happens on **spatially-pooled 512-d vectors** — the fingertip/edge-level motion cues that separate, say, a real grasp from a pretend grasp are averaged out by the global pool *before* the Transformer ever sees them. So VFL is architecturally the *more explicitly temporal* design (a dedicated temporal module, global receptive field) yet it operates on a *coarser* signal than `tsm_ultra_v2`, which mixes time at full spatial resolution (`model_analysis_tsm_ultra_v2.md §1.4`). The head-to-head in `model_analysis_tsm_vs_vfl.md` shows the empirical consequence: VFL's hypothesised advantage on first-vs-last-frame classes (e.g. folding) does *not* materialise — TSM wins those — because the deciding evidence is spatially local and is lost in VFL's pre-attention pooling.
+
 ---
 
 ## 2. Experimental Setup

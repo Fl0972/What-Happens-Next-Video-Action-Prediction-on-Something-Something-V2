@@ -26,6 +26,38 @@ The canonical TSM result [Lin et al., ICCV 2019] reports 59.1% top-1 on SSv2 wit
 
 **Secondary hypothesis:** Focal loss [Lin et al., ICCV 2017] provides an additional improvement by concentrating gradient on the hard within-group confusions (e.g. "poking so it falls" vs. "poking so it slightly moves") that standard cross-entropy treats with equal weight.
 
+### 1.4 Architecture Diagram and Temporal Footprint
+
+The diagram below traces a clip through the network. The defining property of TSM is *where* and *at what granularity* the temporal axis is touched: temporal information is injected **before every one of the 8 residual blocks**, and it is mixed **at full spatial resolution** — at each of the H×W positions and on a slice of every channel — *before* any spatial pooling occurs (`src/models/tsm_resnet.py:53` `_shift`; lines 174–196 `forward`).
+
+```
+ Input clip                       (B, T=4, C=3, H=224, W=224)
+      │  reshape → (B·T, 3, 224, 224)        <- frames flow through space independently
+      v
++------------------------------------------------------------------------+
+|  ResNet18 backbone -- 8 residual blocks over 4 stages                  |
+|                                                                        |
+|  Every block is wrapped by TemporalShift (0 params, 0 FLOPs):          |
+|                                                                        |
+|      channel slice [0    : C/4 ]  shift +1 frame  (frame t reads t-1)  |
+|      channel slice [C/4  : C/2 ]  shift -1 frame  (frame t reads t+1)  |
+|      channel slice [C/2  : C   ]  unchanged                            |
+|                                                                        |
+|   => BEFORE each spatial convolution, every frame already carries a    |
+|      slice of its temporal neighbours, at EVERY (h, w) location.       |
+|   => Depth compounds locality: block k can reach +/-k frames, so by    |
+|      the deepest blocks the receptive field spans the whole T=4 clip.  |
++------------------------------------------------------------------------+
+      |  global average pool -> (B·T, 512)
+      v
+   mean over T  -------------------->  (B, 512)    <- temporal *fusion* is a plain mean,
+      |  dropout 0.3                                  but the features being averaged are
+      v                                               already temporally entangled
+   Linear -> (B, 33) logits
+```
+
+**Temporal footprint.** Temporal reasoning in TSM is *pervasive and fine-grained but locally-scoped*: it happens 8 times, at every spatial location, on the raw feature maps — yet each individual shift only reaches ±1 frame (global span is recovered only by stacking depth). Crucially, the time axis is mixed **while spatial detail is still present**, so motion cues that live in a small region (a fingertip, an object edge) survive into the temporal computation. This is precisely the property `video_former_lite_ultra` lacks — it pools away spatial detail *before* any temporal mixing. See the contrast in `model_analysis_video_former_lite_ultra.md §1.4` and the head-to-head in `model_analysis_tsm_vs_vfl.md`, where TSM's larger margins fall exactly on the trajectory/direction classes that demand fine-grained temporal evidence.
+
 ---
 
 ## 2. Experimental Setup

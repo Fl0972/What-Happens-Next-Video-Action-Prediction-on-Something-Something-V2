@@ -1,0 +1,12 @@
+# @package _global_
+# ViT-S/16 per-frame [CLS] + BiGRU + learned temporal attention pooling.
+# 22M params (vs 86M for ViT-B/16) — ~4× faster, better suited to from-scratch training.
+model:
+  name: vit_s_bigru_attn
+  num_classes: ${num_classes}
+  pretrained: false
+  num_frames: ${dataset.num_frames}
+  gru_hidden: 192
+  gru_layers: 1
+  feat_dropout: 0.0
+  head_dropout: 0.3

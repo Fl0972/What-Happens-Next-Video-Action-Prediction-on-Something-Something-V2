@@ -43,7 +43,7 @@ try:
 except ImportError:
     EfficientFormerVideo = None  # type: ignore[assignment,misc]
 from models.maxvit import MaxViTVideo
-from models.vit_rnn import ViTBiGRU, ViTBiGRUAttn, ViTPerceiver
+from models.vit_rnn import ViTBiGRU, ViTBiGRUAttn, ViTPerceiver, ViTSBiGRUAttn
 from models.vit_spacetime import ViTSpaceTimePerceiver
 from utils import (
     build_transforms,
@@ -127,6 +127,16 @@ def build_model(cfg: DictConfig) -> nn.Module:
             num_frames=int(cfg.model.num_frames),
             pretrained=pretrained,
             gru_hidden=int(cfg.model.get("gru_hidden", 256)),
+            gru_layers=int(cfg.model.get("gru_layers", 1)),
+            feat_dropout=float(cfg.model.get("feat_dropout", 0.0)),
+            head_dropout=float(cfg.model.get("head_dropout", 0.3)),
+        )
+    if name == "vit_s_bigru_attn":
+        return ViTSBiGRUAttn(
+            num_classes=num_classes,
+            num_frames=int(cfg.model.num_frames),
+            pretrained=pretrained,
+            gru_hidden=int(cfg.model.get("gru_hidden", 192)),
             gru_layers=int(cfg.model.get("gru_layers", 1)),
             feat_dropout=float(cfg.model.get("feat_dropout", 0.0)),
             head_dropout=float(cfg.model.get("head_dropout", 0.3)),

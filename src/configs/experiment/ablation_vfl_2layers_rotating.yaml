@@ -1,0 +1,81 @@
+# @package _global_
+# ABLATION B — VFL with 2 Transformer layers (rotating folds).
+#
+# Question: How much of vfl_ultra_rotating's +4.33 pp gain over fixed-split
+# VFL-Ultra comes from the 3rd Transformer block vs. from the rotating-folds
+# protocol itself?
+#
+# Setup: identical to vfl_ultra_rotating in every respect except:
+#
+#   n_layers: 3  →  2
+#   drop_path_rate: 0.20  →  0.15
+#       (0.15 is the value used by 2-layer VFL-Ultra; 0.20 was calibrated
+#        specifically for the 3-layer model. Reverting keeps regularisation
+#        proportional to depth and avoids confounding the n_layers effect
+#        with over-regularisation of a shallower Transformer.)
+#
+# All other knobs frozen: T=4, d_model=512, n_heads=8, focal_gamma=2.0,
+# AdamW lr=8e-4, SGDR T0=25, 150 epochs, rotating 5-fold, warmup=12 ep,
+# reg_warmup=10 ep, RandAug, MixUp, CutMix, label_smoothing=0.1,
+# weighted_sampling, dropout=0.2.
+#
+# Expected outcome:
+#   If n_layers accounts for most of V3's gain → this run will land
+#   significantly below 36.44% (V3), close to 32–33%.
+#   If rotating folds dominate → this run will be within 1 pp of V3,
+#   implying the 3rd layer adds minimal signal at this data scale.
+#
+# Failure resilience:
+#   resume: true  — restores from models/ablation_vfl_2layers_last.pt
+#   wandb: run_id persisted in last checkpoint; re-attaches automatically.
+#
+# Wall-clock: ~4.5 min/epoch × 150 epochs ≈ 11h on A4000 at 150 W.
+# Run (Machine 2):
+#   cd src && python train_kfold.py experiment=ablation_vfl_2layers_rotating
+
+defaults:
+  - override /model: video_former_lite
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  d_model: 512
+  n_heads: 8
+  n_layers: 2          # ablated: 3 → 2
+  mlp_ratio: 4.0
+  attn_dropout: 0.0
+  proj_dropout: 0.0
+  drop_path_rate: 0.15  # reverted to 2-layer appropriate value (was 0.20 for 3 layers)
+  dropout: 0.2
+
+training:
+  epochs: 150
+  batch_size: 32
+  lr: 0.0008
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 25
+  sgdr_t_mult: 1
+  warmup_epochs: 12
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  wandb_run_name: "ablation-B-vfl-2layers"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/ablation_vfl_2layers.pt

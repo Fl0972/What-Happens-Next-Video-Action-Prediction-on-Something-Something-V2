@@ -1,0 +1,80 @@
+# @package _global_
+# ABLATION E — TSM with SGDR T_mult=2 (growing cycles).
+#
+# Question answered: the current SGDR T_mult=1 (equal 25-epoch cycles) causes
+# a rolling-avg dip at every restart and truncates the final cycle at ep 200.
+# Does T_mult=2 (cycles grow 12→24→48→96 epochs) improve val-dir by giving
+# the model a long uninterrupted convergence window in cycle 4?
+#
+# LR trace with warmup_epochs=8, T0=12, T_mult=2, epochs=200:
+#   ep  0–7  : LinearLR warmup → 1e-3
+#   ep  8–19 : SGDR cycle 1  (12 ep), 1e-3 → ~0
+#   ep 20–43 : SGDR cycle 2  (24 ep), 1e-3 → ~0
+#   ep 44–91 : SGDR cycle 3  (48 ep), 1e-3 → ~0
+#   ep 92–187: SGDR cycle 4  (96 ep), 1e-3 → ~0   ← main convergence
+#   ep 188–199: partial cycle 5 (12 ep into T=192)
+#
+# vs T3 reference (T_mult=1, T0=25, 200 ep):
+#   8 equal cycles of 25 ep, last cycle truncated at ep 200.
+#   Restart dips observed at ep 33, 58, 83, 108, 133, 158, 183.
+#
+# Single axis changed vs tsm_ultra_v2_rotating:
+#   sgdr_t0   25  →  12
+#   sgdr_t_mult 1  →   2
+#
+# Everything else identical: T=4, focal γ=2, fold_div=4, R18,
+# AdamW lr=1e-3, wd=5e-4, rotating 5-fold, MixUp α=0.2, CutMix p=0.25,
+# RandAug(2,0.5), label_smoothing=0.1, weighted_sampling, drop_path=0.1.
+#
+# Expected outcome:
+#   If T_mult=2 wins → longer cycles reduce restart-dip overhead and the
+#     96-epoch cycle 4 finds a deeper minimum: val-dir > 39.45% (T3).
+#   If T_mult=1 wins → frequent restarts are essential for exploration;
+#     T_mult=2's long cycle 4 overfits a fixed data partition.
+#
+# Wall-clock: identical to T3 (~4 min/ep × 200 ep ≈ 13h on A4000 @ 150W).
+# Run (Machine 1):
+#   cd src && python train_kfold.py experiment=ablation_tsm_sgdr_t2_rotating
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 4
+  drop_path_rate: 0.1
+  dropout: 0.3
+
+training:
+  epochs: 200
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 12          # changed: 25 → 12
+  sgdr_t_mult: 2       # changed: 1  → 2  (cycles: 12→24→48→96)
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  wandb_run_name: "ablation-E-tsm-sgdr-t2"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/ablation_tsm_sgdr_t2.pt

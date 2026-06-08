@@ -1,0 +1,73 @@
+# @package _global_
+# ABLATION A — TSM without focal loss (rotating folds).
+#
+# Question: How much of tsm_ultra_v2_rotating's 39.45% val-dir comes from
+# focal loss vs. the frame-count fix and the rotating-folds protocol?
+#
+# Setup: identical to tsm_ultra_v2_rotating in every respect except
+# focal_gamma is removed (standard cross-entropy). The only change is:
+#
+#   focal_gamma: 2.0  →  <removed> (CE loss)
+#
+# All other knobs are frozen: T=4, fold_div=4, R18, AdamW lr=1e-3,
+# SGDR T0=25, 200 epochs, rotating 5-fold, RandAug, MixUp, CutMix,
+# label_smoothing=0.1, weighted_sampling, drop_path=0.1, dropout=0.3.
+#
+# Expected outcome:
+#   If focal loss is the dominant contributor → this run will land
+#   ~1 pp below T3 (39.45%), consistent with the +1 pp estimate from
+#   the VFL-controlled experiment (§4.2 of ABLATION_STUDY.md).
+#   If the frame-count fix was dominant → this run will be within
+#   0.3 pp of T3, meaning focal adds noise, not signal, for TSM.
+#
+# Failure resilience:
+#   resume: true  — restores from models/ablation_tsm_no_focal_last.pt
+#   wandb: saves run_id in the last checkpoint; wandb.init(resume="allow")
+#          will attach subsequent runs to the same W&B run.
+#
+# Wall-clock: ~4 min/epoch × 200 epochs ≈ 13h on A4000 at 150 W.
+# Run (Machine 1):
+#   cd src && python train_kfold.py experiment=ablation_tsm_no_focal_rotating
+
+defaults:
+  - override /model: tsm_resnet
+
+dataset:
+  num_frames: 4
+  image_size: 224
+
+model:
+  pretrained: false
+  backbone: resnet18
+  fold_div: 4
+  drop_path_rate: 0.1
+  dropout: 0.3
+
+training:
+  epochs: 200
+  batch_size: 32
+  lr: 0.001
+  optimizer: adamw
+  weight_decay: 0.0005
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 25
+  sgdr_t_mult: 1
+  warmup_epochs: 8
+  reg_warmup_epochs: 10
+  label_smoothing: 0.1
+  # focal_gamma intentionally absent → standard cross-entropy
+  mixup_alpha: 0.2
+  cutmix_prob: 0.25
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.5
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: default
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  wandb_run_name: "ablation-A-tsm-no-focal"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/ablation_tsm_no_focal.pt

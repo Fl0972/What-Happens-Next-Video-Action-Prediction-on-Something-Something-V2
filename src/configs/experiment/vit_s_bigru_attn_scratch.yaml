@@ -1,0 +1,101 @@
+# @package _global_
+# ViT-S/16 + BiGRU + temporal attention — from-scratch closed-track recipe.
+#
+# Architecture: ViT-S/16 (22 M params, random init) → [CLS] per frame →
+#               BiGRU(192, bidirectional) → temporal attention → Linear(33)
+#
+# Parameter choices
+# ─────────────────
+# num_frames=8
+#   Doubles temporal context vs the ViT-B run (4 frames). ViT-S is ~4× cheaper
+#   so 8 frames costs the same wall-clock as 4 frames with ViT-B/16.
+#   The BiGRU needs a meaningful sequence length to learn temporal order;
+#   4 frames is the absolute minimum, 8 is a practical sweet spot.
+#
+# gru_hidden=192
+#   Scaled down from 256 to match the smaller 384-dim backbone embeddings.
+#   Keeps the head/backbone ratio similar to the ViT-B variant.
+#   Output dim = 2×192 = 384, same as the backbone — no bottleneck.
+#
+# lr=4e-4
+#   Slightly higher than the ViT-B run (3e-4) because ViT-S has fewer params
+#   and benefits from larger gradient steps. Still well below the instability
+#   threshold for transformer attention layers.
+#
+# warmup_epochs=15 (was 20)
+#   Shorter warmup is safe with fewer parameters — QK dot-products settle faster.
+#   Saves 5 epochs of slow near-random training.
+#
+# reg_warmup_epochs=15
+#   Keeps MixUp/CutMix off during the fragile warmup phase, same reasoning.
+#
+# weight_decay=0.05 (was 0.1)
+#   ViT-S at 22M params is far less over-parameterised on this dataset than
+#   ViT-B at 86M. Heavy L2 regularisation would starve the backbone of signal.
+#   0.05 is the DeiT-Small reference value for small datasets.
+#
+# feat_dropout=0.1
+#   Light dropout on the CLS token before the GRU. Acts as a noise injection
+#   that forces the GRU to be robust to individual-frame uncertainty.
+#   Zero in the ViT-B run was fine because the backbone itself was the bottleneck;
+#   here the backbone trains faster so early overfitting is more likely.
+#
+# head_dropout=0.4 (was 0.5)
+#   Slightly relaxed — the smaller model needs less aggressive head regularisation.
+#
+# label_smoothing=0.15 (was 0.2)
+#   Less smoothing because the model is smaller and benefits more from hard
+#   supervision to converge.
+#
+# sgdr_t0=25, epochs=130
+#   post-warmup = 130 - 15 = 115 epochs → ~4.6 SGDR cycles of 25 epochs.
+#   Fewer total epochs because ViT-S converges faster; cycles slightly shorter
+#   to increase exploration frequency.
+#
+# compile_mode=reduce-overhead (was default)
+#   Fixed input shapes (B×T constant) let the compiler eliminate Python overhead
+#   more aggressively. Gives ~10-15% additional throughput vs default mode.
+#
+# Run: cd src && python train_kfold.py experiment=vit_s_bigru_attn_scratch
+
+defaults:
+  - override /model: vit_s_bigru_attn
+
+dataset:
+  num_frames: 8
+  image_size: 224
+
+model:
+  pretrained: false
+  gru_hidden: 192
+  gru_layers: 1
+  feat_dropout: 0.1
+  head_dropout: 0.4
+
+training:
+  epochs: 130
+  batch_size: 32
+  lr: 0.0004
+  optimizer: adamw
+  weight_decay: 0.05
+  scheduler: cosine_warm_restarts
+  sgdr_t0: 25
+  sgdr_t_mult: 1
+  warmup_epochs: 15
+  reg_warmup_epochs: 15
+  label_smoothing: 0.15
+  mixup_alpha: 0.4
+  cutmix_prob: 0.5
+  clip_grad_norm: 1.0
+  rand_augment_ops: 2
+  rand_augment_magnitude: 0.7
+  horizontal_flip: false
+  weighted_sampling: true
+  sampler_power: 0.5
+  compile: true
+  compile_mode: reduce-overhead
+  rotating_folds: true
+  n_folds: 5
+  resume: true
+  wandb_project: "challenge-modal"
+  checkpoint_path: ${hydra:runtime.cwd}/../models/vit_s_bigru_attn_scratch.pt
