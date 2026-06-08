@@ -566,6 +566,48 @@ root (i.e. `src/...`).
   cache; cross-backbone learned ensembles (new-Large + ssv2 + k400) run
   end-to-end.
 
+### 4.7 Source-frame re-extraction: 4 → 16 real frames (`extract_ssv2_frames.py`)
+- **Finding.** The shipped data is **exactly 4 frames/video**
+  (`frame_000..003.jpg`, 224x224) — confirmed across all splits. On a temporal
+  "what happens next" task that is the dominant accuracy ceiling (Kaggle ~0.64
+  tracks `val_dir` closely, so val is well-calibrated). No frame-count change is
+  possible from the shipped data alone.
+- **Unlock.** The `video_<id>` folder names are **original Something-Something-v2
+  IDs** — every challenge ID lies inside SSv2's `1..220847` range (train 45k,
+  val 6.7k, test 6.9k). The course permits external data, so the source clips
+  can be re-sampled to 16 real frames and the models retrained at their native
+  16-frame resolution. **Integrity:** frames only — never SSv2's own labels
+  (train class folders keep the *challenge's* labels; val/test stay label-free).
+- **Tooling.** New `src/extract_ssv2_frames.py` (ffmpeg-based, parallel,
+  resumable): `--verify` compares source-extracted endpoints against the shipped
+  frames on *train* clips to prove the ID mapping before committing to the full
+  ~20 GB download; default mode extracts N frames into a parallel tree
+  (`val2/` → `val2_16f/`) preserving structure. Next: retrain VideoMAE
+  (SSv2-Base + K400-Large) at `num_frames=16`, then re-ensemble.
+
+### 4.8 V-JEPA 2 backbone — frozen-encoder attentive probe (`models/vjepa.py`)
+- **Why.** Top leaderboard teams used V-JEPA; it predicts in *feature* space
+  (vs VideoMAE's pixels) → SOTA on SSv2 motion understanding. `transformers
+  4.57` ships `VJEPA2ForVideoClassification`, and `facebook/vjepa2-vitl-fpc16-
+  256-ssv2` (ViT-L, 16 frames, 256px, **SSv2-finetuned** = our domain) loads
+  directly with input convention `(B, T, C, H, W)` — same as our VideoMAE.
+- **What.** New `VJEPA2` wrapper mirroring `models/videomae.py`: replaces the
+  174-class head with our 33 (warm-started from matching SSv2 templates via the
+  shared `match_classes_to_ssv2`), **freezes the encoder** (`vjepa2`) and trains
+  only the attentive `pooler` + linear `classifier` — Meta's canonical probe
+  recipe (326M frozen / 49M trainable). Frozen ⇒ autograd builds no graph
+  through the encoder ⇒ trains at a real batch on 21 GB. Smoke-tested:
+  `(2,16,3,256,256) → (2,33)`, head rows warm-started.
+- **Integration.** `build_model` dispatches `name: vjepa`; new
+  `configs/model/vjepa.yaml` + `configs/experiment/vjepa.yaml`. Added an
+  `image_size` config plumbed through `train.py` (256 transforms, saved in the
+  checkpoint) and read back by `evaluate`/`create_submission`/`ensemble_*`, so
+  V-JEPA @256 coexists with VideoMAE/TSM @224 in one ensemble.
+- **Hardware note.** The headline 77.3%-SSv2 checkpoint is ViT-g/384/64f and
+  won't fit 21 GB; ViT-L/256/16f is the feasible config. Depends on the 16-frame
+  re-extraction (§4.7) — pointless on the shipped 4 frames. Full-encoder
+  finetune is a later option; frozen probe first.
+
 ### 4.4 Snapshot ensemble in `evaluate.py`
 - **What.** `evaluate.py` now uses the same `_resolve_checkpoint_paths()`
   helper from `create_submission.py`: it discovers either

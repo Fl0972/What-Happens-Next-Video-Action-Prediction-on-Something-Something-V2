@@ -29,4 +29,5 @@ training:
   # Explicit list of checkpoints to ensemble (overrides ensemble_top_k when set).
   # Example: training.checkpoint_paths=[/abs/a.pt,/abs/b.pt]
   checkpoint_paths: null
+  init_weights_from: null  # warm-start model weights from this checkpoint (staged finetuning); fresh optimizer/schedule
   skip_submission: false   # ensemble_per_class.py: skip CSV write (val-only run)

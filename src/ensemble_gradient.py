@@ -156,7 +156,8 @@ def main(cfg: DictConfig) -> None:
     num_classes = int(first_ckpt.get("num_classes", cfg.model.num_classes))
     num_frames = int(first_ckpt.get("num_frames", cfg.dataset.num_frames))
     pretrained = bool(first_ckpt.get("pretrained", cfg.model.pretrained))
-    eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained)
+    image_size = int(first_ckpt.get("image_size", cfg.dataset.get("image_size", 224)))
+    eval_transform = build_transforms(image_size=image_size, is_training=False, use_imagenet_norm=pretrained)
 
     use_tta = bool(cfg.dataset.get("tta", True))
     n_clips = max(1, int(cfg.dataset.get("n_clips", 1)))

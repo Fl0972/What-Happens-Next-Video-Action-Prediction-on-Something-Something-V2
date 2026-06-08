@@ -254,7 +254,8 @@ def main(cfg: DictConfig) -> None:
     first_ckpt: Dict[str, Any] = torch.load(checkpoint_paths[0], map_location="cpu")
     num_frames = int(first_ckpt.get("num_frames", cfg.dataset.num_frames))
     pretrained = bool(first_ckpt.get("pretrained", cfg.model.pretrained))
-    eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained)
+    image_size = int(first_ckpt.get("image_size", cfg.dataset.get("image_size", 224)))
+    eval_transform = build_transforms(image_size=image_size, is_training=False, use_imagenet_norm=pretrained)
 
     test_root = Path(cfg.dataset.test_dir).resolve()
     output_path = Path(cfg.dataset.submission_output).resolve()

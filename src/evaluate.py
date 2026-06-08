@@ -101,7 +101,8 @@ def main(cfg: DictConfig) -> None:
     # Load the first checkpoint to derive num_frames / pretrained for the dataset
     first_ckpt: Dict[str, Any] = torch.load(checkpoint_paths[0], map_location="cpu")
     pretrained_used = bool(first_ckpt.get("pretrained", cfg.model.pretrained))
-    eval_transform = build_transforms(is_training=False, use_imagenet_norm=pretrained_used)
+    image_size = int(first_ckpt.get("image_size", cfg.dataset.get("image_size", 224)))
+    eval_transform = build_transforms(image_size=image_size, is_training=False, use_imagenet_norm=pretrained_used)
     num_frames = int(first_ckpt.get("num_frames", cfg.dataset.num_frames))
 
     # Use ALL of val_dir — no train/val split here

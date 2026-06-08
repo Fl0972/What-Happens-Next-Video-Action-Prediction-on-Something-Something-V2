@@ -1,0 +1,27 @@
+# @package _global_
+# V-JEPA 2 frozen-encoder attentive probe on the 16-frame re-extracted data.
+# Only the attentive pooler + linear head train, so we use a higher LR and a
+# bigger batch than full finetuning, and no layer-wise LR decay.
+#
+# REQUIRES the 16-frame frames from extract_ssv2_frames.py — point the dataset
+# dirs at /Data/florian.guillaumey/val2_16f (override on the CLI / in run_16f.sh):
+#   dataset.train_dir=.../val2_16f/train dataset.val_dir=.../val2_16f/val dataset.test_dir=.../val2_16f/test
+defaults:
+  - override /model: vjepa
+
+training:
+  batch_size: 8
+  num_workers: 4
+  lr: 0.0001          # probe (pooler + head) trains faster than a full backbone
+  max_lr: 0.001
+  weight_decay: 0.05
+  epochs: 20
+  ema_decay: 0.999
+  layerwise_lr_decay: false   # frozen probe: off. Finetuning runs override to true.
+  llrd_decay: 0.75            # layer-wise LR decay rate when layerwise_lr_decay=true
+  eval_view_chunk: 2
+  checkpoint_path: ${hydra:runtime.cwd}/../models/vjepa_probe.pt
+
+dataset:
+  num_frames: 16     # V-JEPA needs the 16 real frames; pointless on the shipped 4
+  image_size: 256    # V-JEPA 2 ViT-L crop size

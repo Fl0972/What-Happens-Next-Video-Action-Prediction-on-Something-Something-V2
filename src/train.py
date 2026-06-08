@@ -82,6 +82,18 @@ def build_model(cfg: DictConfig, class_names: Optional[List[Optional[str]]] = No
             gradient_checkpointing=bool(cfg.model.get("gradient_checkpointing", False)),
             class_names=class_names if warm_start else None,
         )
+    if name == "vjepa":
+        from models.vjepa import VJEPA2
+        warm_start = bool(cfg.model.get("warm_start_head_from_ssv2", True))
+        return VJEPA2(
+            num_classes=num_classes,
+            num_frames=int(cfg.model.num_frames),
+            pretrained=pretrained,
+            checkpoint=str(cfg.model.get("checkpoint", VJEPA2.DEFAULT_CHECKPOINT)),
+            unfreeze_top_k=int(cfg.model.get("unfreeze_top_k", 0)),
+            gradient_checkpointing=bool(cfg.model.get("gradient_checkpointing", False)),
+            class_names=class_names if warm_start else None,
+        )
     raise ValueError(f"Unknown model.name: {name}")
 
 
@@ -232,10 +244,11 @@ def main(cfg: DictConfig) -> None:
         print(f"Label-aware hflip enabled — {len(flip_pairs)//2} mirror pair(s):")
         for src, dst in readable.items():
             print(f"  {src}  <-flip->  {dst}")
+    image_size = int(cfg.dataset.get("image_size", 224))
     train_transform = build_transforms(
-        is_training=True,  use_imagenet_norm=use_imagenet_norm, flip_pairs=flip_pairs,
+        image_size=image_size, is_training=True, use_imagenet_norm=use_imagenet_norm, flip_pairs=flip_pairs,
     )
-    eval_transform  = build_transforms(is_training=False, use_imagenet_norm=use_imagenet_norm)
+    eval_transform  = build_transforms(image_size=image_size, is_training=False, use_imagenet_norm=use_imagenet_norm)
 
     num_frames = int(cfg.dataset.num_frames)
 
@@ -270,19 +283,29 @@ def main(cfg: DictConfig) -> None:
     )
 
     model = build_model(cfg, class_names=class_names).to(device)
+    init_from = cfg.training.get("init_weights_from")
+    if init_from:
+        # Staged finetuning: warm-start weights from a prior checkpoint, but with
+        # a fresh optimizer + LR schedule (resume.pt, if present, overrides below).
+        _init_sd = torch.load(str(init_from), map_location="cpu", weights_only=False)["model_state_dict"]
+        _miss, _unexp = model.load_state_dict(_init_sd, strict=False)
+        print(f"Init weights from {init_from}: missing={len(_miss)} unexpected={len(_unexp)}.")
     label_smoothing = float(cfg.training.get("label_smoothing", 0.1))
     loss_fn  = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     base_lr = float(cfg.training.lr)
     base_max_lr = float(cfg.training.get("max_lr", 1e-3))
     weight_decay = float(cfg.training.get("weight_decay", 0.05))
     use_llrd = (
-        cfg.model.name == "videomae"
+        cfg.model.name in ("videomae", "vjepa")
         and bool(cfg.training.get("layerwise_lr_decay", True))
     )
     if use_llrd:
-        from models.videomae import build_videomae_param_groups
+        if cfg.model.name == "vjepa":
+            from models.vjepa import build_vjepa_param_groups as _build_param_groups
+        else:
+            from models.videomae import build_videomae_param_groups as _build_param_groups
         decay_rate = float(cfg.training.get("llrd_decay", 0.75))
-        opt_groups, max_lrs = build_videomae_param_groups(
+        opt_groups, max_lrs = _build_param_groups(
             model,
             base_lr=base_lr,
             base_max_lr=base_max_lr,
@@ -400,6 +423,7 @@ def main(cfg: DictConfig) -> None:
             "num_classes": int(cfg.model.num_classes),
             "pretrained": bool(cfg.model.pretrained),
             "num_frames": num_frames,
+            "image_size": image_size,
             "val_accuracy": val_acc,
             "ema": ema,
             "config": OmegaConf.to_container(cfg, resolve=True),

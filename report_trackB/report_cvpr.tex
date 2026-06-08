@@ -1,0 +1,540 @@
+% =====================================================================
+%  CSC_43M04_EP — Computer Vision with Deep Learning (École Polytechnique)
+%  Research report: Temporal Action Prediction on SSv2-33 ("What Happens Next?")
+%
+%  CVPR double-column template.  Requires the official CVPR style files in the
+%  same directory (or on TEXINPUTS):  cvpr.sty, cvpr_eso.sty, ieeenat_fullname.bst
+%  Download: https://github.com/cvpr-org/author-kit
+%
+%  Compile:  pdflatex report_cvpr  &&  bibtex report_cvpr  &&  pdflatex x2
+%  (or simply  latexmk -pdf report_cvpr.tex)
+%
+%  Figures live in  docs/figures/  ; this file is expected to sit in  docs/ .
+% =====================================================================
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+% ---- CVPR style: use the camera-ready (non-review) mode -------------
+\usepackage{cvpr}              % <- final mode (no line numbers, no review banner)
+% \usepackage[review]{cvpr}    % <- uncomment for a review version with line numbers
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=blue]{hyperref}
+
+\graphicspath{{figures/}}
+
+% ---------------------------------------------------------------------
+%  >>> EDIT THESE TWO BLOCKS <<<  (placeholders requested from the user)
+% ---------------------------------------------------------------------
+\newcommand{\TEAMID}{\textcolor{red}{TEAMID}}            % e.g. 17
+\newcommand{\LBONE}{\textcolor{red}{[Stage-1 score / rank]}}  % public-LB top-1 + rank
+\newcommand{\LBTWO}{\textcolor{red}{[Stage-2 score / rank]}}  % private-LB top-1 + rank
+% Authors: replace the placeholder names below (keep alphabetical order).
+% ---------------------------------------------------------------------
+
+\def\cvprPaperID{\TEAMID}
+\def\confName{CSC\_43M04\_EP — Modal d'informatique}
+\def\confYear{2026}
+
+\title{What Happens Next? Temporal Action Prediction on a 33-Class
+Something-Something\,V2 Subset Under a Closed-Track Constraint}
+
+\author{%
+Andrea Signoretti\thanks{\textcolor{red}{Replace with the full author list in
+alphabetical order; add \texttt{\textbackslash and} between authors. Team ID: \TEAMID.}}\\
+École Polytechnique\\
+{\tt\small signorettiandrea05@gmail.com}
+% ---- example for a second author ----
+% \and
+% Second Author\\
+% École Polytechnique\\
+% {\tt\small second@author.fr}
+}
+
+\begin{document}
+\maketitle
+
+% =====================================================================
+\begin{abstract}
+We present a systematic study of temporal action prediction on a 33-class
+subset of Something-Something\,V2 (SSv2), a benchmark designed so that
+classification requires temporal reasoning rather than scene recognition.
+Operating under a \emph{closed-track} constraint---training from scratch with
+no pretrained weights---and with only four frames per clip, we develop a
+progression of architectures from CNN baselines through Temporal Shift Module
+(TSM) variants and a hybrid CNN--Transformer. Two findings dominate the
+experimental record. First, a 10-epoch \emph{regularisation warm-up} that
+defers MixUp/CutMix until basic spatial features have formed yields a
+$+36.3$\,pp gain on the Transformer model and is necessary for convergence
+across all from-scratch architectures. Second, matching the model's expected
+frame count to the true clip length ($T{=}4$ rather than $T{=}5$) gives a
+$+4.4$\,pp gain---larger than a $3\times$ parameter scale-up---showing that a
+silent data-preparation error can dominate architectural choice in short-clip
+video understanding. Combining these insights with focal loss, rotating-fold
+training and 10-crop test-time augmentation, a log-softmax late-fusion ensemble
+of architecturally complementary models attains \textbf{44.03\% top-1 / 75.37\%
+top-5} on the official 6{,}745-clip validation set, $+2.35$\,pp over the best
+single model through verified error decorrelation. Failure analysis shows the
+residual errors are dominated by real-vs-pretended intent and temporal-direction
+confusions that are fundamentally under-constrained at four frames.
+\end{abstract}
+
+% =====================================================================
+\section{Problem Description}
+\label{sec:problem}
+
+\paragraph{Task and dataset.}
+The challenge (CSC\_43M04\_EP) is fine-grained action recognition over a
+33-class subset of Something-Something\,V2 (SSv2)~\cite{goyal2017ssv2}, framed
+as \emph{``What Happens Next?''}. Each clip is a folder of extracted JPEG
+frames; models consume a fixed number of frames and output logits over the 33
+classes (e.g.\ \emph{Pouring something into something}, \emph{Pretending to
+throw something}). The training set contains ${\sim}36{,}000$ clips with a
+$20\times$ class imbalance (162--3{,}170 clips per class); the official
+validation set (\emph{val-dir}) contains 6{,}745 clips. The evaluation metric
+is top-1 accuracy (top-5 reported as a secondary metric).
+
+\paragraph{Why it is hard.}
+Three properties make this regime difficult.
+\textbf{(i)~Motion-defined labels.} SSv2 was explicitly constructed to defeat
+appearance-only recognition~\cite{goyal2017ssv2}: the same objects recur across
+classes (any ``something'' can be poured, covered or \emph{pretended} to be
+poured), so the discriminative signal lives in the temporal trajectory, not the
+static frame---unlike scene-biased benchmarks such as Kinetics~\cite{kay2017kinetics}.
+\textbf{(ii)~Extreme temporal sparsity.} Each clip contains exactly
+\textbf{four} frames, an order of magnitude fewer than the 8--32 frames standard
+in video recognition~\cite{lin2019tsm,bertasius2021timesformer}. Models must
+extract maximal temporal information from minimal temporal signal, making the
+temporal-aggregation mechanism and the \emph{correctness} of temporal
+preprocessing unusually consequential.
+\textbf{(iii)~Closed-track constraint.} Pretrained weights (ImageNet, Kinetics)
+are prohibited. All spatial features, temporal dynamics and class boundaries
+must be learned jointly from ${\sim}36$k clips---roughly $7\times$ fewer than
+Kinetics-400---which removes the single largest source of accuracy in modern
+video models and amplifies the cost of every design error.
+
+% =====================================================================
+\section{Method}
+\label{sec:method}
+
+\subsection{Overview and intuition}
+Our central hypothesis is that, when pretraining is unavailable, \emph{every}
+parameter spent on temporal modelling is a parameter \emph{not} spent on
+learning spatial features from scratch. This motivates a preference for
+parameter-free or lightweight temporal mechanisms. We therefore evaluate a
+ladder of temporal-aggregation strategies on a shared ResNet
+backbone~\cite{he2016resnet}, and find that the parameter-free Temporal Shift
+Module (TSM)~\cite{lin2019tsm} offers the best accuracy/convergence trade-off,
+with a hybrid CNN--Transformer providing a complementary inductive bias for
+ensembling. All models share the interface
+$(B,T,C,H,W)\!\rightarrow\!(B,\text{33})$.
+
+\subsection{Architectures}
+\label{sec:arch}
+Figure~\ref{fig:arch} contrasts our two strongest families.
+
+\paragraph{Baselines (own implementation).}
+\textbf{CNNBaseline} applies a ResNet18~\cite{he2016resnet} independently to each
+of the $T{=}4$ frames and average-pools features over time---a bag-of-frames
+lower bound with no temporal reasoning. \textbf{CNNLSTM} replaces the pooling
+with a unidirectional LSTM (hidden 256). With only four frames the gating adds
+parameters without meaningful gain over pooling, confirming that naive
+sequential integration is insufficient.
+
+\paragraph{TSMResNet (our main model; TSM reused).}
+We wrap every residual block of a ResNet18 with the Temporal Shift
+Module~\cite{lin2019tsm}: a fraction $1/\texttt{fold\_div}$ of channels is
+shifted one step backward in time and $1/\texttt{fold\_div}$ forward, letting
+frame $t$ read from frames $t{\pm}1$ at \emph{zero} added parameters or FLOPs.
+We set $\texttt{fold\_div}{=}4$ (50\% of channels participate per block),
+deliberately more aggressive than the default of
+8~\cite{lin2019tsm}: with only four frames, context must percolate across a
+shallow temporal depth, so a larger shift fraction is required. The shift
+operator and the model wrapper are our own implementation following the
+published description in~\cite{lin2019tsm}.
+
+\paragraph{VideoFormerLite (VFL; hybrid, our implementation).}
+A ResNet18 produces a 512-d feature per frame; a learnable \texttt{[CLS]}
+token~\cite{dosovitskiy2021vit} and temporal positional embeddings are
+prepended, and the sequence passes through a 2-layer \emph{pre-LN} Transformer
+encoder ($d{=}512$, 8 heads)~\cite{xiong2020prenorm}. The \texttt{[CLS]} output
+is projected to logits. With $T{=}4$ tokens the attention block is
+computationally trivial (${\sim}0.03$\,GFLOPs vs.\ ${\sim}7.2$ for the backbone);
+it acts as a \emph{global} temporal aggregator---any frame pair is one attention
+step apart---in contrast to TSM's \emph{local} shift. This is a deliberately
+lightweight relative of TimeSformer~\cite{bertasius2021timesformer}: we keep a
+CNN spatial encoder (more sample-efficient from scratch) and use the Transformer
+only as a temporal head.
+
+\paragraph{Negative-result architectures.}
+We also trained \textbf{R(2+1)D-18}~\cite{tran2018r2plus1d} (torchvision,
+from scratch) and a \textbf{TSM-ResNet50 + BiGRU} variant. Both are reported in
+Section~\ref{sec:results} as informative failures.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{arch_comparison.png}
+  \caption{The two complementary temporal mechanisms ensembled in this work.
+  \textbf{TSM} (left) mixes time \emph{locally} via parameter-free channel shifts
+  inside every ResNet block; \textbf{VideoFormerLite} (right) mixes time
+  \emph{globally} via \texttt{[CLS]}-token self-attention over the four frame
+  tokens. Their orthogonal inductive biases drive the ensemble gain
+  (Sec.~\ref{sec:ablation}).}
+  \label{fig:arch}
+\end{figure}
+
+\subsection{Training recipe}
+\label{sec:training}
+All models are trained from scratch with mixed-precision
+(\texttt{torch.autocast}) on a single NVIDIA RTX A4000 (16\,GB), managed with
+Hydra configs. The recipe (Table~\ref{tab:recipe}) reflects two
+closed-track-specific findings.
+
+\paragraph{Regularisation warm-up.}
+MixUp~\cite{zhang2018mixup} and CutMix~\cite{yun2019cutmix} assume a network that
+already produces meaningful class probabilities. Applied from epoch 1 to a
+randomly initialised model they create conflicting gradients on top of basic
+feature learning, preventing convergence. We therefore \emph{defer} all
+label-mixing for the first 10 epochs (\emph{regularisation warm-up}). This single
+change is the largest controlled effect we measured (Sec.~\ref{sec:ablation}).
+
+\paragraph{Frame-count correctness.}
+The dataset's uniform \texttt{linspace} sampler returns duplicated indices when
+the requested $T$ exceeds the four available frames. Setting $T{=}4$ ensures
+every sampled frame is unique; duplicated tokens otherwise carry no new
+information yet still corrupt the temporal-shift signal (Sec.~\ref{sec:ablation}).
+
+\paragraph{Loss and optimisation.}
+The best model uses focal loss~\cite{lin2017focal} ($\gamma{=}2$) with label
+smoothing $0.1$: SSv2 deliberately groups near-identical
+classes~\cite{goyal2017ssv2}, and the $(1{-}p_t)^\gamma$ reweighting
+concentrates gradient on these hard within-group pairs. We optimise with
+AdamW~\cite{loshchilov2019adamw} (peak lr $10^{-3}$, weight decay $5\times10^{-4}$),
+an 8-epoch linear warm-up, and cosine annealing~\cite{loshchilov2017sgdr}.
+Horizontal flipping is \emph{disabled} because it inverts the
+left/right-directional SSv2 labels; spatial augmentation
+(RandAugment~\cite{cubuk2020randaugment}, random erasing~\cite{zhong2020randomerase})
+is applied \emph{temporally consistently} (identical parameters across the four
+frames) to preserve motion. Class imbalance is handled by
+$\sqrt{\,}$-frequency weighted sampling. Stochastic depth~\cite{huang2016stochdepth}
+(rate 0.1) and head dropout (0.3) regularise the network.
+
+\paragraph{Rotating $k$-fold and inference.}
+For the strongest variants we train with rotating 5-fold splits (each epoch sees
+80\% of the data, epochs scaled by $1/0.8$), which both regularises and yields
+decorrelated checkpoints for ensembling. At inference we optionally apply
+10-crop test-time augmentation (TTA: 5 spatial crops $\times$ 2 flips) and
+average logits. Ensembling combines per-model TTA-averaged log-probabilities
+(Sec.~\ref{sec:ensemble}).
+
+\paragraph{Reused vs.\ own code.}
+\emph{Reused:} the ResNet18/R(2+1)D backbones (torchvision), the TSM
+\emph{concept}~\cite{lin2019tsm}, and standard augmentation/optimiser primitives.
+\emph{Our own:} the TSM block wrapper, VideoFormerLite, the full Hydra training
+pipeline (\texttt{train.py}/\texttt{train\_kfold.py}), the temporally-consistent
+augmentation, the dataset/sampler, and all evaluation and ensembling code.
+
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Technique & Setting & Source \\
+\midrule
+Reg.\ warm-up      & 10 ep, no MixUp/CutMix & \textbf{this work} \\
+MixUp              & $\alpha{=}0.2$, after ep 10 & \cite{zhang2018mixup} \\
+CutMix             & $p{=}0.25$, after ep 10 & \cite{yun2019cutmix} \\
+Focal loss         & $\gamma{=}2$ & \cite{lin2017focal} \\
+Label smoothing    & $\varepsilon{=}0.1$ & \cite{muller2019labelsmooth} \\
+RandAugment        & 2 ops, mag.\ 0.5 & \cite{cubuk2020randaugment} \\
+Random erasing     & $p{=}0.25$ & \cite{zhong2020randomerase} \\
+Weighted sampling  & power $0.5$ & --- \\
+Horizontal flip    & \textbf{disabled} & label semantics \\
+Stochastic depth   & rate $0.1$ & \cite{huang2016stochdepth} \\
+Optimiser          & AdamW, lr $10^{-3}$, wd $5{\times}10^{-4}$ & \cite{loshchilov2019adamw} \\
+Schedule           & 8-ep warm-up + cosine & \cite{loshchilov2017sgdr} \\
+\bottomrule
+\end{tabular}
+\caption{Training recipe for the best single model (TSM-Ultra-v2, ResNet18,
+$T{=}4$, \texttt{fold\_div}=4, 150 epochs, ${\sim}5.8$\,h on one A4000).}
+\label{tab:recipe}
+\end{table}
+
+% =====================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Experimental protocol}
+We report top-1 accuracy on the official val-dir set (6{,}745 clips), evaluated
+without TTA unless stated, to isolate model quality from inference-time
+augmentation. An internal 20\% split of the training data is used for model
+selection; it runs $15$--$19$\,pp higher than val-dir because of distribution
+shift, so val-dir is treated as ground truth. The seed is fixed (42).
+
+\paragraph{Leaderboard.}
+On the official challenge leaderboard our submission scored \LBONE{} in Stage~1
+and \LBTWO{} in Stage~2. These correspond to the log-softmax ensemble described
+in Sec.~\ref{sec:ensemble}; val-dir numbers below are the offline counterpart.
+
+\subsection{Main results}
+Table~\ref{tab:main} and Figure~\ref{fig:permodel} summarise the progression.
+The best \emph{single} model, \textbf{TSM-Ultra-v2}, reaches \textbf{38.25\%}
+val-dir top-1 (57.73\% internal); the best \emph{ensemble} reaches
+\textbf{44.03\%} top-1 / 75.37\% top-5.
+
+\begin{table*}[t]
+\centering\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lllccccc@{}}
+\toprule
+Model & Backbone & Temporal module & $T$ & Params & Int.\ Val & Val-Dir T1 & Val-Dir T5 \\
+\midrule
+CNNBaseline             & ResNet18 & Avg pool            & 4 & 11.2M & ---     & ---     & --- \\
+CNNLSTM                 & ResNet18 & LSTM ($h{=}256$)    & 4 & 11.5M & marg.   & ---     & --- \\
+R(2+1)D-18 (ep15)       & R(2+1)D  & 3D-factored conv    & 8 & 31M   & 10.78\% & ---     & --- \\
+VFL (no warm-up)        & ResNet18 & 2-layer Transformer & 4 & 17.5M & \phantom{0}9.45\% & --- & --- \\
+VFL (warm-up, 60ep)     & ResNet18 & 2-layer Transformer & 4 & 17.5M & 45.78\% & ---     & --- \\
+TSM-Ultra               & ResNet18 & Channel shift       & 5 & 11.2M & 53.32\% & 34.91\% & 66.88\% \\
+TSM-Ultra-50            & ResNet50 & Channel shift       & 8 & 23.6M & 45.26\% & ---     & --- \\
+VFL-Ultra               & ResNet18 & 2-layer Transformer & 4 & 17.5M & 53.37\% & 32.11\% & 64.85\% \\
+\textbf{TSM-Ultra-v2}   & ResNet18 & Channel shift + focal & 4 & 11.2M & \textbf{57.73\%} & \textbf{38.25\%} & \textbf{68.70\%} \\
+\midrule
+3-model weighted ens.\ (+TTA)  & --- & Weighted logit avg & --- & --- & --- & 40.43\% & 71.27\% \\
+\textbf{Best ensemble} (+rot+TTA) & --- & Log-softmax avg & --- & --- & --- & \textbf{44.03\%} & \textbf{75.37\%} \\
+\bottomrule
+\end{tabular}
+\caption{Main results. Internal-val is a 20\% held-out split (optimistically
+biased); val-dir is the official 6{,}745-clip set. The best single model fixes
+the frame count and adds focal loss; the best ensemble fuses TSM and VFL with
+rotating folds and 10-crop TTA.}
+\label{tab:main}
+\end{table*}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig01_per_model_accuracy.png}
+  \caption{Per-model val-dir top-1/top-5. The TSM family dominates; correcting
+  the frame count (TSM-Ultra$\rightarrow$TSM-Ultra-v2) is the single largest
+  per-model jump.}
+  \label{fig:permodel}
+\end{figure}
+
+\subsection{Ablations}
+\label{sec:ablation}
+
+\paragraph{Regularisation warm-up ($+36.3$\,pp).}
+Table~\ref{tab:warmup} isolates the warm-up: identical architecture and config,
+single variable. Without it, VFL stalls at 9.45\% (killed at epoch 4) and
+R(2+1)D at 10.78\%; with a 10-epoch warm-up VFL reaches 45.78\%. The effect
+transfers across architectures, suggesting it is a general property of
+cold-start training with label-mixing augmentations rather than an
+architecture-specific quirk.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Run & Warm-up & Val @ep10 & Final \\
+\midrule
+VFL (killed)        & none      & ${\sim}9.4\%$ & \phantom{0}9.45\% \\
+VFL                 & 10 ep     & 17.58\%       & \textbf{45.78\%} (60ep) \\
+TSM-Ultra           & 10 ep     & 25.60\%       & \textbf{53.32\%} (80ep) \\
+R(2+1)D (killed)    & none      & ${\sim}8.4\%$ & 10.78\% (15ep) \\
+\bottomrule
+\end{tabular}
+\caption{Regularisation-warm-up ablation. Deferring MixUp/CutMix by 10 epochs is
+the largest controlled effect in this study ($+36.3$\,pp on VFL).}
+\label{tab:warmup}
+\end{table}
+
+\paragraph{Frame count ($+4.4$\,pp).}
+Reducing $T$ from 5 to 4 to match the true clip length improves internal val by
+$+4.41$\,pp ($53.32\!\rightarrow\!57.73$) and val-dir by $+3.34$\,pp
+($34.91\!\rightarrow\!38.25$). Crucially, scaling instead to ResNet50 \emph{with}
+$T{=}8$ (TSM-Ultra-50) \emph{regresses} to 45.26\%: a $3\times$ parameter
+increase cannot compensate for corrupted temporal input
+(Fig.~\ref{fig:permodel}). The correct order is \emph{fix the data, then scale}.
+
+\paragraph{Rotating folds and TTA.}
+Rotating 5-fold training adds ${\sim}+1.2$\,pp to each single model
+(e.g.\ TSM-v2 $38.25\!\rightarrow\!39.45$); 10-crop TTA adds a further
+${\sim}+2.6$\,pp (TSM-v2 $\rightarrow\!40.86$, TSM-v2-rot $\rightarrow\!41.68$),
+the strongest single configuration before ensembling (Fig.~\ref{fig:ttarot}).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig02_tta_effect.png}
+  \caption{Effect of 10-crop TTA across models: a consistent
+  ${\sim}+2.5$--$3$\,pp top-1 gain, larger on top-5.}
+  \label{fig:ttarot}
+\end{figure}
+
+\paragraph{Ensemble components (leave-one-out).}
+On the three-model weighted sub-ensemble (40.43\%), removing any component
+degrades accuracy (Table~\ref{tab:loo}, Fig.~\ref{fig:loo}): no member is
+redundant. The largest drop ($-3.17$\,pp) comes from removing the strongest model
+(TSM-Ultra-v2), but removing VFL---the \emph{weakest} member---still costs
+$-0.61$\,pp, confirming that its globally-attentive errors decorrelate from
+TSM's locally-shifted ones.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Configuration & Top-1 & $\Delta$ \\
+\midrule
+Full ensemble (A+B+C)    & \textbf{40.43\%} & --- \\
+\;$-$ TSM-Ultra-v2 (A)   & 37.26\% & $-3.17$ \\
+\;$-$ TSM-Ultra (B)      & 39.56\% & $-0.87$ \\
+\;$-$ VFL-Ultra (C)      & 39.82\% & $-0.61$ \\
+\bottomrule
+\end{tabular}
+\caption{Leave-one-out on the weighted sub-ensemble. Every component contributes
+positively---ensemble gain stems from error decorrelation, not accuracy
+averaging.}
+\label{tab:loo}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig11_leave_one_out.png}
+  \caption{Leave-one-out ensemble study (val-dir top-1). All three members are
+  necessary; the weakest standalone model (VFL) still adds value through
+  decorrelation.}
+  \label{fig:loo}
+\end{figure}
+
+\subsection{The final ensemble}
+\label{sec:ensemble}
+The best closed-track result fuses \texttt{tsm\_v2}, its rotating-fold variant
+\texttt{tsm\_v2\_rot}, and \texttt{vfl\_rot}, each with 10-crop TTA, by averaging
+\emph{log-softmax} probabilities (Fig.~\ref{fig:ensemble}). Log-space averaging
+down-weights over-confident wrong predictions and rewards agreement, which suits
+members with different calibration (focal vs.\ CE; single-split vs.\ rotating
+fold). It reaches \textbf{44.03\% / 75.37\%}, $+2.35$\,pp over the best single
+configuration (41.68\%). Adding the weaker closed models (plain \texttt{tsm},
+\texttt{vfl}) \emph{hurts} ($\rightarrow\!42.73\%$): their noisier signals dilute
+the two strong TSM predictions, a concrete instance of the
+``diversity-not-quantity'' principle.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig04_ensemble.png}
+  \caption{Ensemble vs.\ its components. Log-softmax late fusion of two TSM
+  variants and one VFL variant (all +TTA) exceeds the best single model by
+  $+2.35$\,pp top-1.}
+  \label{fig:ensemble}
+\end{figure}
+
+\subsection{Per-class and failure analysis}
+\label{sec:failure}
+The ensemble's macro-F1 is 0.358, but per-class F1 spans a wide range
+(Fig.~\ref{fig:perclass}). The \textbf{best} classes (F1\,$\geq$\,0.54) are all
+\emph{clean directional single-object motions}---\emph{Pulling left$\rightarrow$right}
+(0.62), \emph{Pouring into} (0.58), \emph{Moving closer} (0.57),
+\emph{Uncovering} (0.55), \emph{Folding} (0.53)---precisely the patterns TSM's
+per-block shift is built to encode.
+
+The \textbf{worst} classes expose two systematic failure modes
+(Figs.~\ref{fig:confmat},~\ref{fig:pairs}). \emph{(i)~Intent/``pretending''
+ambiguity}: \emph{Picking something up} (F1\,$=$\,0.07) is confused 30/199 times
+with \emph{Pretending to pick something up}---the executed motion is visually
+identical and only the (often off-screen) outcome differs. \emph{(ii)~Temporal
+direction \& near-duplicate pairs}: \emph{Folding}$\leftrightarrow$\emph{Unfolding}
+(29 and 24 mutual confusions) and \emph{Moving up}$\rightarrow$\emph{Pretending to
+pick up} (40) differ only in motion direction or completion, which four frames
+under-determine. The lowest score, \emph{Spilling something next to something}
+(F1\,$=$\,0.03, $n{=}60$), combines visual ambiguity with low support. These
+residual errors coincide exactly with SSv2's design intent~\cite{goyal2017ssv2}:
+they are dataset-level limits of a four-frame appearance model, not tuning
+failures.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig05_per_class_f1.png}
+  \caption{Per-class F1 (ensemble, val-dir). Directional single-object motions
+  score highest; ``pretending'' and direction-ambiguous classes score lowest.}
+  \label{fig:perclass}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig06_confusion_matrix.png}
+  \caption{Confusion matrix (ensemble, val-dir). Off-diagonal mass concentrates
+  on semantically adjacent pairs (real vs.\ pretended; fold vs.\ unfold).}
+  \label{fig:confmat}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig07_confused_pairs.png}
+  \caption{Most-confused class pairs. The dominant errors are intent
+  (real vs.\ pretended) and temporal-direction confusions.}
+  \label{fig:pairs}
+\end{figure}
+
+\subsection{What did not work}
+\textbf{Scaling before fixing data} (TSM-Ultra-50): $3\times$ parameters and
+$T{=}8$ regressed 8\,pp below TSM-Ultra-v2 because $T{=}8$ re-introduced
+duplicated frames. \textbf{R(2+1)D from scratch}: 3D-factored convolutions need
+far more data/pretraining; combined with a forced resolution drop (112$\times$112
+for VRAM) it stalled at 10.78\%. \textbf{TSM-ResNet50 + BiGRU}: a heavy backbone,
+a sequential head and a rotating-fold split (which cuts effective per-epoch data
+$5\times$) together failed to converge (${\sim}7.6\%$). The common lesson is that
+under a closed track, convergence---not capacity---is the binding constraint.
+
+\subsection{Comparison to published SSv2 baselines}
+Our best single model (38.25\%) sits ${\sim}20.9$\,pp below the lowest published
+TSM result (ResNet50, Kinetics-pretrained, $T{=}8$: 59.1\%~\cite{lin2019tsm}).
+We attribute this gap to no pretraining (${\sim}15$\,pp), a smaller backbone
+(${\sim}3$\,pp) and fewer frames (${\sim}2$\,pp)---i.e.\ the model performs as
+first-principles reasoning predicts given the constraints, and the 44.03\%
+ensemble narrows the gap further. State-of-the-art open-track numbers
+(Video Swin~\cite{liu2022videoswin} 69.6\%; VideoMAE\,V2~\cite{wang2023videomae2}
+74.7\% on the full 174-class set) quantify the value of large-scale pretraining
+that the closed track forbids.
+
+% =====================================================================
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+We documented a systematic, closed-track progression from a CNN baseline to a
+log-softmax ensemble for four-frame action prediction on SSv2-33. Two
+data-centric findings dominate: a 10-epoch regularisation warm-up that unlocks
+convergence for from-scratch label-mixing ($+36.3$\,pp), and a frame-count
+correction ($T{=}5\!\rightarrow\!4$) that beats a $3\times$ parameter scale-up
+($+4.4$\,pp). Built on these, a log-softmax fusion of two TSM variants and a
+VideoFormerLite---chosen for orthogonal local-shift vs.\ global-attention
+biases, with rotating folds and 10-crop TTA---achieves \textbf{44.03\% top-1 /
+75.37\% top-5} on val-dir, with a leave-one-out study confirming every component
+contributes through error decorrelation. Failure analysis shows the residual
+errors are exactly the real-vs-pretended and temporal-direction confusions that
+SSv2 was designed to demand and that four frames under-determine.
+
+\paragraph{Future work.}
+(i)~Isolate the focal-loss contribution, currently confounded with the
+frame-count fix. (ii)~Multi-clip temporal inference (3--5 windows/video,
+${\sim}+1$--$2$\,pp expected). (iii)~Frame interpolation ($4\!\rightarrow\!8$) as
+synthetic temporal augmentation, e.g.\ with a MaxViT~\cite{tu2022maxvit} head.
+(iv)~An explicit open- vs.\ closed-track study to quantify the pretraining gap on
+this subset. (v)~Stratified cross-validation for more robust model selection
+under the $20\times$ class imbalance.
+
+% =====================================================================
+\section*{Contributions}
+\noindent\textcolor{red}{\emph{[Fill in per team member. Template:]}}
+\textbf{Andrea Signoretti} --- designed and implemented the TSM and
+VideoFormerLite models, the Hydra training/k-fold pipeline, the ensemble and TTA
+code, ran all experiments and ablations, and produced the analysis figures and
+this report. \emph{(For a multi-person team, split: model implementation,
+training-pipeline engineering, ensemble/evaluation, data analysis \& figures,
+and writing, attributing each explicitly.)}
+
+% =====================================================================
+{\small
+\bibliographystyle{ieeenat_fullname}
+\bibliography{report_cvpr}
+}
+
+\end{document}
